@@ -1,0 +1,81 @@
+# =============================================================================
+# CIB seven Run 3.0.0 – overrides for LDAP
+#
+# Loaded via SPRING_CONFIG_ADDITIONAL_LOCATION on top of
+# /camunda/configuration/production.yml and takes precedence over it.
+# No secrets in this file – every ${...} comes from the environment
+# (docker-compose.yml -> .env).
+#
+# Login chain: webclient (SevenUserProvider) -> engine identity service
+#              -> LDAP plugin -> bind as the user's DN against OpenLDAP.
+# The engine REST API stays protected by production.yml's "composite" auth
+# (webclient JWT or HTTP Basic with LDAP credentials).
+# =============================================================================
+
+camunda:
+  bpm:
+    run:
+      # Invoice example (needs --example). Deploys the invoice process and starts instances.
+      # LDAP is read-only, so the example creates no demo users, groups or authorizations.
+      example:
+        enabled: true
+      # LDAP identity provider plugin (read-only)
+      # https://docs.cibseven.org/manual/latest/user-guide/process-engine/identity-service/#configuration-properties-of-the-ldap-plugin
+      ldap:
+        enabled: true
+        server-url: ${LDAP_URL}
+        accept-untrusted-certificates: false
+        manager-dn: ${LDAP_MANAGER_DN}
+        manager-password: ${LDAP_MANAGER_PASSWORD}
+        base-dn: ${LDAP_BASE_DN}
+        # Users: uid=<id>,ou=people,<base-dn>
+        user-search-base: ou=people
+        user-search-filter: (objectclass=inetOrgPerson)
+        user-id-attribute: uid
+        user-firstname-attribute: givenName
+        user-lastname-attribute: sn
+        user-email-attribute: mail
+        user-password-attribute: userPassword
+        # Groups: cn=<id>,ou=groups,<base-dn> (groupOfNames, members via "member")
+        group-search-base: ou=groups
+        group-search-filter: (objectclass=groupOfNames)
+        group-id-attribute: cn
+        group-name-attribute: cn
+        group-member-attribute: member
+        sort-control-supported: false
+        authorization-check-enabled: true
+      # Grants all permissions to the LDAP group "camunda-admin" on engine start.
+      admin-auth:
+        enabled: true
+        administrator-group-name: camunda-admin
+        # Needed by the invoice example only: at first start it completes one of its demo tasks
+        # as user id "mary" (no groups) and relies on a user authorization that its demo-data step
+        # only creates for a writable identity service. There is NO user "mary" in LDAP; this
+        # only grants permissions to the user id. Without it CIB seven fails with a
+        # NullPointerException in @PostDeploy. See README, explicit decisions E3.
+        administrator-user-name: mary
+    # Default task filter: created on engine start if no filter with this name exists yet.
+    # Empty query = every task the user is allowed to read. production.yml (unlike default.yml)
+    # doesn't create it. Visible to camunda-admin via admin-auth; other users need a
+    # READ authorization on the filter, see README "Default task filter".
+    filter:
+      create: All tasks
+    authorization:
+      enabled: true
+
+cibseven:
+  webclient:
+    # Modeler (BPMN/DMN/forms in the webclient). Off by default and not set by production.yml
+    # (default.yml and the WildFly webclient switch it on). Its tables are created by the engine
+    # (webclientExtensionsEnabled: true in production.yml).
+    modeler:
+      enabled: true
+      templates:
+        paths:
+          # Bundled connector templates (e.g. AI agent) inside the jars on the classpath
+          - "classpath*:element-templates/*.json"
+          # Own element templates: configuration/element-templates/ in the container
+          - "file:configuration/element-templates/*.json"
+    user:
+      # Default: login through the engine (and therefore through the LDAP plugin).
+      provider: org.cibseven.webapp.auth.SevenUserProvider

@@ -1,0 +1,98 @@
+# =============================================================================
+# CIB seven 3.0.0 EE on WildFly – production configuration with OpenLDAP
+#
+# WildFly variant of docker-compose.yml: same OpenLDAP, seed job, database and .env, but
+# CIB seven runs on WildFly (image built from ../wildfly/Dockerfile).
+#
+#   cibseven        CIB seven WildFly EE, users/groups from OpenLDAP (read-only),
+#                   REST API: webclient tokens only
+#   default-filter  one-off job: creates the task filter "All tasks"
+#   cibseven-db, openldap, ldap-seed   taken over from docker-compose.yml (extends)
+#
+# Own project name -> own containers and volumes, independent of the Run variant.
+# Start:  docker compose -f docker-compose.wildfly.yml up -d --build
+# Docs:   ../README.md, "WildFly variant"
+# =============================================================================
+name: cibseven-openldap-wildfly
+
+services:
+
+  cibseven-db:
+    extends:
+      file: docker-compose.yml
+      service: cibseven-db
+
+  openldap:
+    extends:
+      file: docker-compose.yml
+      service: openldap
+
+  ldap-seed:
+    extends:
+      file: docker-compose.yml
+      service: ldap-seed
+    depends_on:
+      openldap:
+        condition: service_healthy
+
+  cibseven:
+    build:
+      context: ../wildfly
+      args:
+        IDENTITY_PROVIDER: ldap
+        CIBSEVEN_WILDFLY_IMAGE: ${CIBSEVEN_WILDFLY_IMAGE:-enterprise.artifacts.cibseven.org/cibseven:wildfly-3.0.0-ee}
+    image: cibseven-wildfly:ldap
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+      DB_DRIVER: org.postgresql.Driver
+      DB_URL: jdbc:postgresql://cibseven-db:5432/cibseven
+      DB_USERNAME: ${CIBSEVEN_DB_USER:-cibseven}
+      DB_PASSWORD: ${CIBSEVEN_DB_PASSWORD:?CIBSEVEN_DB_PASSWORD missing in .env}
+      # AI agent connector (on, like the Run variant). LLM key only from .env.
+      AI_AGENT_ENABLED: "true"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY missing in .env}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      CIBSEVEN_CONNECT_AI_AGENT_DEFAULT_MODEL: ${AI_DEFAULT_MODEL:-gpt-6-luna}
+      # LDAP plugin: ${env.*} expressions in standalone.xml
+      LDAP_URL: ldap://openldap:3890
+      LDAP_BASE_DN: dc=cibseven,dc=local
+      LDAP_MANAGER_DN: cn=readonly,dc=cibseven,dc=local
+      LDAP_MANAGER_PASSWORD: ${LDAP_READONLY_PASSWORD:?LDAP_READONLY_PASSWORD missing in .env}
+    ports:
+      - "${CIBSEVEN_PORT:-8080}:8080"
+    volumes:
+      # Webclient configuration on the classpath of the global module org.cibseven.config
+      - ./cibseven/cibseven-webclient-wildfly.yaml:/camunda/modules/org/cibseven/config/main/cibseven-webclient.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/webapp/"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    depends_on:
+      cibseven-db:
+        condition: service_healthy
+      ldap-seed:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  default-filter:
+    image: docker.io/library/postgres:17-alpine
+    entrypoint: ["/bin/sh", "/scripts/create-default-filter.sh"]
+    environment:
+      PGHOST: cibseven-db
+      PGDATABASE: cibseven
+      PGUSER: ${CIBSEVEN_DB_USER:-cibseven}
+      PGPASSWORD: ${CIBSEVEN_DB_PASSWORD:?CIBSEVEN_DB_PASSWORD missing in .env}
+      FILTER_NAME: All tasks
+    volumes:
+      - ../wildfly/create-default-filter.sh:/scripts/create-default-filter.sh:ro
+    depends_on:
+      cibseven-db:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  cibseven-db-data:
+  ldap-data:
+  ldap-config:

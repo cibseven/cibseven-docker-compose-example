@@ -1,0 +1,5 @@
+# Local secrets – never commit
+.env
+
+# Downloaded plugin jars (fetch with keycloak/plugin/fetch-plugin.sh)
+keycloak/plugin/*.jar

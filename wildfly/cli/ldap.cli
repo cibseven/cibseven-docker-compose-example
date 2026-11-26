@@ -1,0 +1,10 @@
+# LDAP identity provider plugin (read-only), same settings as the Run variant.
+# ${env.*} expressions are resolved by WildFly at runtime from the container environment,
+# so no secret is written into the image.
+embed-server --server-config=standalone.xml
+batch
+
+/subsystem=camunda-bpm-platform/process-engines=default:list-add(name=plugins,index=0,value={"class"=>"org.cibseven.bpm.identity.impl.ldap.plugin.LdapIdentityProviderPlugin","properties"=>{"serverUrl"=>"${env.LDAP_URL}","acceptUntrustedCertificates"=>"false","managerDn"=>"${env.LDAP_MANAGER_DN}","managerPassword"=>"${env.LDAP_MANAGER_PASSWORD}","baseDn"=>"${env.LDAP_BASE_DN}","userSearchBase"=>"ou=people","userSearchFilter"=>"(objectclass=inetOrgPerson)","userIdAttribute"=>"uid","userFirstnameAttribute"=>"givenName","userLastnameAttribute"=>"sn","userEmailAttribute"=>"mail","userPasswordAttribute"=>"userPassword","groupSearchBase"=>"ou=groups","groupSearchFilter"=>"(objectclass=groupOfNames)","groupIdAttribute"=>"cn","groupNameAttribute"=>"cn","groupMemberAttribute"=>"member","sortControlSupported"=>"false","authorizationCheckEnabled"=>"true"}})
+
+run-batch
+stop-embedded-server

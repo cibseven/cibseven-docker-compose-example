@@ -1,0 +1,138 @@
+# =============================================================================
+# CIB seven Run 3.0.0 – production configuration with OpenLDAP (LDAP identity service)
+#
+#   cibseven     CIB seven Run enterprise edition (--production --example, AI agent on), users/groups from OpenLDAP
+#   cibseven-db  PostgreSQL for the process engine
+#   openldap     OpenLDAP 2.6 (osixia v2, dc=cibseven,dc=local) incl. a read-only bind user
+#   ldap-seed    one-off job: creates the OUs, the admin user cibadmin and group camunda-admin
+#
+# All secrets come from .env (template: env.example). Nothing starts without it.
+# Docs: ../README.md
+# =============================================================================
+name: cibseven-openldap
+
+x-ldap-env: &ldap-env
+  LDAP_BASE_DN: dc=cibseven,dc=local
+  LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD:?LDAP_ADMIN_PASSWORD missing in .env}
+
+services:
+
+  cibseven-db:
+    image: docker.io/library/postgres:17-alpine
+    environment:
+      POSTGRES_DB: cibseven
+      POSTGRES_USER: ${CIBSEVEN_DB_USER:-cibseven}
+      POSTGRES_PASSWORD: ${CIBSEVEN_DB_PASSWORD:?CIBSEVEN_DB_PASSWORD missing in .env}
+    volumes:
+      - cibseven-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  openldap:
+    image: docker.io/osixia/openldap:2.6.15
+    # osixia v2 only accepts pre-hashed passwords. The plain passwords from .env are hashed
+    # ({SSHA}) when the container starts and handed to the bootstrap, then the image's own
+    # entrypoint takes over. The bootstrap only runs once, on empty volumes.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export OPENLDAP_BOOTSTRAP_DATA_ROOT_PASSWORD_HASHED="$$(slappasswd -h '{SSHA}' -s "$$LDAP_ADMIN_PASSWORD")"
+        export OPENLDAP_BOOTSTRAP_CONFIG_ROOT_PASSWORD_HASHED="$$(slappasswd -h '{SSHA}' -s "$$LDAP_CONFIG_PASSWORD")"
+        export OPENLDAP_BOOTSTRAP_DATA_READONLY_PASSWORD_HASHED="$$(slappasswd -h '{SSHA}' -s "$$LDAP_READONLY_PASSWORD")"
+        exec /usr/sbin/container
+    environment:
+      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD:?LDAP_ADMIN_PASSWORD missing in .env}
+      LDAP_CONFIG_PASSWORD: ${LDAP_CONFIG_PASSWORD:?LDAP_CONFIG_PASSWORD missing in .env}
+      LDAP_READONLY_PASSWORD: ${LDAP_READONLY_PASSWORD:?LDAP_READONLY_PASSWORD missing in .env}
+      OPENLDAP_BOOTSTRAP_ORGANIZATION: CIB seven
+      OPENLDAP_BOOTSTRAP_SUFFIX: dc=cibseven,dc=local
+      # Root DN cn=admin,dc=cibseven,dc=local (write access, used by ldap-seed only)
+      # Bind user for CIB seven: cn=readonly,dc=cibseven,dc=local (read access only)
+      OPENLDAP_BOOTSTRAP_DATA_READONLY: "true"
+      OPENLDAP_BOOTSTRAP_DATA_READONLY_DN: cn=readonly,dc=cibseven,dc=local
+      # Local test without TLS. Production: LDAPS (ldaps://...:6360) with a valid certificate.
+      OPENLDAP_BOOTSTRAP_TLS: "false"
+    ports:
+      # Optional: for Apache Directory Studio / ldapsearch from the host
+      - "${LDAP_PORT:-1389}:3890"
+    volumes:
+      - ldap-config:/etc/openldap/slapd.d
+      - ldap-data:/var/lib/openldap/openldap-data
+    healthcheck:
+      test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost:3890 -b '' -s base namingContexts >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  ldap-seed:
+    image: docker.io/osixia/openldap:2.6.15
+    entrypoint: ["/bin/bash", "/seed/seed.sh"]
+    environment:
+      <<: *ldap-env
+      LDAP_URL: ldap://openldap:3890
+      LDAP_USER_CIBADMIN_PASSWORD: ${LDAP_USER_CIBADMIN_PASSWORD:?LDAP_USER_CIBADMIN_PASSWORD missing in .env}
+    volumes:
+      - ./ldap:/seed:ro
+    depends_on:
+      openldap:
+        condition: service_healthy
+    restart: "no"
+
+  cibseven:
+    # CIB seven enterprise image (needs: docker login enterprise.artifacts.cibseven.org)
+    image: ${CIBSEVEN_IMAGE:-enterprise.artifacts.cibseven.org/cibseven:run-3.0.0-ee}
+    # --production: configuration/production.yml instead of default.yml (no demo/demo admin,
+    #               authorization on, composite auth for /engine-rest, WADL off)
+    # --example:    invoice example on the classpath (also needs camunda.bpm.run.example.enabled)
+    # As soon as one module flag is given, --webapps and --rest must be listed explicitly.
+    command: ["./cibseven.sh", "--webapps", "--rest", "--example", "--production"]
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+      DB_DRIVER: org.postgresql.Driver
+      DB_URL: jdbc:postgresql://cibseven-db:5432/cibseven
+      DB_USERNAME: ${CIBSEVEN_DB_USER:-cibseven}
+      DB_PASSWORD: ${CIBSEVEN_DB_PASSWORD:?CIBSEVEN_DB_PASSWORD missing in .env}
+      # AI agent connector + agentic ad hoc sub processes (off by default under --production,
+      # this switches it on). MCP REST API (/mcp) stays off.
+      AI_AGENT_ENABLED: "true"
+      MCP_ENABLED: "false"
+      # LLM access for the AI agent connector – the key lives only in .env.
+      # Any OpenAI-compatible endpoint works (OpenAI, Azure OpenAI, OpenRouter, Ollama, ...).
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY missing in .env}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      CIBSEVEN_CONNECT_AI_AGENT_DEFAULT_MODEL: ${AI_DEFAULT_MODEL:-gpt-6-luna}
+      # Loads ./cibseven/application.yaml on top of production.yml (higher priority)
+      SPRING_CONFIG_ADDITIONAL_LOCATION: file:/opt/cibseven/config/
+      # Values for the placeholders in ./cibseven/application.yaml
+      LDAP_URL: ldap://openldap:3890
+      LDAP_BASE_DN: dc=cibseven,dc=local
+      LDAP_MANAGER_DN: cn=readonly,dc=cibseven,dc=local
+      LDAP_MANAGER_PASSWORD: ${LDAP_READONLY_PASSWORD:?LDAP_READONLY_PASSWORD missing in .env}
+    ports:
+      - "${CIBSEVEN_PORT:-8080}:8080"
+    volumes:
+      - ./cibseven/application.yaml:/opt/cibseven/config/application.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      cibseven-db:
+        condition: service_healthy
+      ldap-seed:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  cibseven-db-data:
+  ldap-data:
+  ldap-config:

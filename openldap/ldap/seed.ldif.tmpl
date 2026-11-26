@@ -1,0 +1,25 @@
+# Template for ldap-seed (seed.sh). @...@ placeholders are replaced at runtime;
+# passwords end up only as SSHA hashes in the directory – never in plain text in the repo.
+
+dn: ou=people,@BASE_DN@
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,@BASE_DN@
+objectClass: organizationalUnit
+ou: groups
+
+dn: uid=cibadmin,ou=people,@BASE_DN@
+objectClass: inetOrgPerson
+uid: cibadmin
+cn: CIB Admin
+givenName: CIB
+sn: Admin
+mail: cibadmin@example.org
+userPassword: @CIBADMIN_PASSWORD_HASH@
+
+dn: cn=camunda-admin,ou=groups,@BASE_DN@
+objectClass: groupOfNames
+cn: camunda-admin
+description: CIB seven administrators (full permissions via admin-auth)
+member: uid=cibadmin,ou=people,@BASE_DN@

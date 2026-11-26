@@ -1,0 +1,105 @@
+{
+  "realm": "cibseven",
+  "displayName": "CIB seven",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "resetPasswordAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "groups": [
+    {
+      "name": "camunda-admin",
+      "path": "/camunda-admin"
+    }
+  ],
+  "users": [
+    {
+      "username": "cibadmin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "CIB",
+      "lastName": "Admin",
+      "email": "cibadmin@example.org",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${KC_USER_CIBADMIN_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/camunda-admin"
+      ]
+    },
+    {
+      "username": "service-account-cibseven-identity",
+      "enabled": true,
+      "serviceAccountClientId": "cibseven-identity",
+      "clientRoles": {
+        "realm-management": [
+          "query-users",
+          "view-users",
+          "query-groups"
+        ]
+      }
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "cibseven-webclient",
+      "name": "CIB seven Webclient",
+      "description": "Authorization code flow for the CIB seven webclient (/webapp)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${CIBSEVEN_OIDC_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "rootUrl": "${CIBSEVEN_PUBLIC_URL}",
+      "baseUrl": "/webapp/",
+      "redirectUris": [
+        "${CIBSEVEN_PUBLIC_URL}/webapp/*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "${CIBSEVEN_PUBLIC_URL}/webapp/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "engine-rest-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "cibseven-engine-rest",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "cibseven-identity",
+      "name": "CIB seven identity provider (cibseven-keycloak plugin)",
+      "description": "Service account used by the engine to read users and groups via the Keycloak admin API. Read-only roles only.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${CIBSEVEN_IDENTITY_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
+    }
+  ]
+}

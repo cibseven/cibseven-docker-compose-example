@@ -1,0 +1,12 @@
+# cibseven-keycloak identity provider plugin (read-only), same settings as the Run variant.
+# The plugin itself is installed as the WildFly module
+# org.cibseven.bpm.identity.cibseven-identity-keycloak (see Dockerfile).
+# ${env.*} expressions are resolved by WildFly at runtime from the container environment,
+# so no secret is written into the image.
+embed-server --server-config=standalone.xml
+batch
+
+/subsystem=camunda-bpm-platform/process-engines=default:list-add(name=plugins,index=0,value={"class"=>"org.cibseven.community.keycloak.plugin.KeycloakIdentityProviderPlugin","properties"=>{"keycloakIssuerUrl"=>"${env.KEYCLOAK_ISSUER_URL}","keycloakAdminUrl"=>"${env.KEYCLOAK_ADMIN_URL}","clientId"=>"${env.CIBSEVEN_IDENTITY_CLIENT_ID}","clientSecret"=>"${env.CIBSEVEN_IDENTITY_CLIENT_SECRET}","useUsernameAsCamundaUserId"=>"true","useGroupPathAsCamundaGroupId"=>"true","cacheEnabled"=>"true","maxCacheSize"=>"500","cacheExpirationTimeoutMin"=>"5"}})
+
+run-batch
+stop-embedded-server

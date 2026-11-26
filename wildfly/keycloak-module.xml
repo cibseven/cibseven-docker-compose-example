@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WildFly module for the cibseven-keycloak identity provider plugin (installed by the Dockerfile).
+     As described in https://github.com/cibseven-community-hub/cibseven-keycloak/tree/main/examples/wildfly -->
+<module xmlns="urn:jboss:module:1.0" name="org.cibseven.bpm.identity.cibseven-identity-keycloak">
+    <resources>
+        <resource-root path="cibseven-keycloak-all-@VERSION@.jar"/>
+    </resources>
+    <dependencies>
+        <module name="sun.jdk"/>
+        <module name="javax.api"/>
+        <!-- jdk.net.Sockets, used by the bundled HTTP client (not in the upstream example) -->
+        <module name="jdk.net"/>
+        <module name="org.cibseven.bpm.cibseven-engine"/>
+        <module name="org.cibseven.commons.cibseven-commons-logging"/>
+        <module name="org.slf4j"/>
+    </dependencies>
+</module>

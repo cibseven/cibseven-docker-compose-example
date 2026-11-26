@@ -1,0 +1,104 @@
+# =============================================================================
+# CIB seven 3.0.0 EE on WildFly – production configuration with Keycloak
+#
+# WildFly variant of docker-compose.yml: same Keycloak, realm, databases and .env, but
+# CIB seven runs on WildFly (image built from ../wildfly/Dockerfile).
+#
+#   cibseven        CIB seven WildFly EE, webclient SSO via Keycloak, users/groups via the
+#                   cibseven-keycloak plugin (read-only), REST API: webclient tokens only
+#   default-filter  one-off job: creates the task filter "All tasks"
+#   cibseven-db, keycloak-db, keycloak   taken over from docker-compose.yml (extends)
+#
+# Own project name -> own containers and volumes, independent of the Run variant.
+# Start:  docker compose -f docker-compose.wildfly.yml up -d --build
+# Docs:   ../README.md, "WildFly variant"
+# =============================================================================
+name: cibseven-keycloak-wildfly
+
+services:
+
+  cibseven-db:
+    extends:
+      file: docker-compose.yml
+      service: cibseven-db
+
+  keycloak-db:
+    extends:
+      file: docker-compose.yml
+      service: keycloak-db
+
+  keycloak:
+    extends:
+      file: docker-compose.yml
+      service: keycloak
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+
+  cibseven:
+    build:
+      context: ../wildfly
+      args:
+        IDENTITY_PROVIDER: keycloak
+        CIBSEVEN_WILDFLY_IMAGE: ${CIBSEVEN_WILDFLY_IMAGE:-enterprise.artifacts.cibseven.org/cibseven:wildfly-3.0.0-ee}
+        KEYCLOAK_PLUGIN_VERSION: ${KEYCLOAK_PLUGIN_VERSION:-2.2.1}
+    image: cibseven-wildfly:keycloak
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+      DB_DRIVER: org.postgresql.Driver
+      DB_URL: jdbc:postgresql://cibseven-db:5432/cibseven
+      DB_USERNAME: ${CIBSEVEN_DB_USER:-cibseven}
+      DB_PASSWORD: ${CIBSEVEN_DB_PASSWORD:?CIBSEVEN_DB_PASSWORD missing in .env}
+      # AI agent connector (on, like the Run variant). LLM key only from .env.
+      AI_AGENT_ENABLED: "true"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY missing in .env}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      CIBSEVEN_CONNECT_AI_AGENT_DEFAULT_MODEL: ${AI_DEFAULT_MODEL:-gpt-6-luna}
+      # cibseven-keycloak plugin: ${env.*} expressions in standalone.xml
+      KEYCLOAK_ISSUER_URL: http://keycloak:8080/realms/cibseven
+      KEYCLOAK_ADMIN_URL: http://keycloak:8080/admin/realms/cibseven
+      CIBSEVEN_IDENTITY_CLIENT_ID: cibseven-identity
+      CIBSEVEN_IDENTITY_CLIENT_SECRET: ${CIBSEVEN_IDENTITY_CLIENT_SECRET:?CIBSEVEN_IDENTITY_CLIENT_SECRET missing in .env}
+      # Webclient SSO: ${...} placeholders in cibseven-webclient-wildfly.yaml
+      KEYCLOAK_PUBLIC_URL: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8180}
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      KEYCLOAK_REALM: cibseven
+      CIBSEVEN_OIDC_CLIENT_ID: cibseven-webclient
+      CIBSEVEN_OIDC_CLIENT_SECRET: ${CIBSEVEN_OIDC_CLIENT_SECRET:?CIBSEVEN_OIDC_CLIENT_SECRET missing in .env}
+    ports:
+      - "${CIBSEVEN_PORT:-8080}:8080"
+    volumes:
+      # Webclient configuration on the classpath of the global module org.cibseven.config
+      - ./cibseven/cibseven-webclient-wildfly.yaml:/camunda/modules/org/cibseven/config/main/cibseven-webclient.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/webapp/"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    depends_on:
+      cibseven-db:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    restart: unless-stopped
+
+  default-filter:
+    image: docker.io/library/postgres:17-alpine
+    entrypoint: ["/bin/sh", "/scripts/create-default-filter.sh"]
+    environment:
+      PGHOST: cibseven-db
+      PGDATABASE: cibseven
+      PGUSER: ${CIBSEVEN_DB_USER:-cibseven}
+      PGPASSWORD: ${CIBSEVEN_DB_PASSWORD:?CIBSEVEN_DB_PASSWORD missing in .env}
+      FILTER_NAME: All tasks
+    volumes:
+      - ../wildfly/create-default-filter.sh:/scripts/create-default-filter.sh:ro
+    depends_on:
+      cibseven-db:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  cibseven-db-data:
+  keycloak-db-data:

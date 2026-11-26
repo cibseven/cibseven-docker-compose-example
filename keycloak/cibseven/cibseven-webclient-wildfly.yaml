@@ -1,0 +1,31 @@
+# =============================================================================
+# CIB seven webclient on WildFly – Keycloak SSO (used by docker-compose.wildfly.yml)
+#
+# Mounted as classpath:cibseven-webclient.yaml (global WildFly module org.cibseven.config).
+# Same login as the Run variant, with one difference: the webclient talks to the engine
+# REST API with its OWN token (accessTokenToEngineRest: false). WildFly has no Spring
+# Security resource server, and the REST API there accepts webclient tokens only.
+# No secrets in this file – every ${...} comes from the container environment.
+# =============================================================================
+cibseven:
+  webclient:
+    user:
+      provider: org.cibseven.webapp.auth.OAuth2UserProvider
+    sso:
+      active: true
+      endpoints:
+        # Browser redirects -> public URL
+        authorization: ${KEYCLOAK_PUBLIC_URL}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/auth
+        endSession: ${KEYCLOAK_PUBLIC_URL}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/logout
+        # Server-to-server -> internal URL
+        token: ${KEYCLOAK_INTERNAL_URL}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/token
+        jwks: ${KEYCLOAK_INTERNAL_URL}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs
+        user: ${KEYCLOAK_INTERNAL_URL}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/userinfo
+        revocation: ${KEYCLOAK_INTERNAL_URL}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/revoke
+      clientId: ${CIBSEVEN_OIDC_CLIENT_ID}
+      clientSecret: ${CIBSEVEN_OIDC_CLIENT_SECRET}
+      scopes: openid profile email
+      userIdProperty: preferred_username
+      userNameProperty: name
+      # The engine REST API on WildFly only accepts webclient tokens
+      accessTokenToEngineRest: false

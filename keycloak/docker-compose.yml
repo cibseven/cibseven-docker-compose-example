@@ -1,0 +1,144 @@
+# =============================================================================
+# CIB seven Run 3.0.0 – production configuration with Keycloak (OAuth2 / OIDC)
+#
+#   cibseven     CIB seven Run enterprise edition (--production --oauth2 --example, AI agent on),
+#                webclient SSO via Keycloak, users/groups via the cibseven-keycloak plugin (read-only)
+#   cibseven-db  PostgreSQL for the process engine
+#   keycloak     Keycloak (production mode "start"), realm imported on first start
+#   keycloak-db  PostgreSQL for Keycloak
+#
+# All secrets come from .env (template: env.example). Nothing starts without it.
+# Docs: ../README.md
+# =============================================================================
+name: cibseven-keycloak
+
+services:
+
+  cibseven-db:
+    image: docker.io/library/postgres:17-alpine
+    environment:
+      POSTGRES_DB: cibseven
+      POSTGRES_USER: ${CIBSEVEN_DB_USER:-cibseven}
+      POSTGRES_PASSWORD: ${CIBSEVEN_DB_PASSWORD:?CIBSEVEN_DB_PASSWORD missing in .env}
+    volumes:
+      - cibseven-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  keycloak-db:
+    image: docker.io/library/postgres:17-alpine
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: ${KEYCLOAK_DB_USER:-keycloak}
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD missing in .env}
+    volumes:
+      - keycloak-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.5
+    # "start" = production mode. --import-realm imports ./keycloak/*.json once
+    # (an existing realm is skipped on later starts).
+    command: ["start", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD missing in .env}
+      # Public URL (browser). It defines the issuer ("iss") of every token – even when
+      # CIB seven talks to Keycloak internally via http://keycloak:8080.
+      KC_HOSTNAME: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8180}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      # Local test without TLS only. Real production: terminate TLS at Keycloak or a
+      # reverse proxy and remove KC_HTTP_ENABLED.
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD missing in .env}
+      # Placeholders that Keycloak replaces in realm-cibseven.json during the import
+      CIBSEVEN_PUBLIC_URL: ${CIBSEVEN_PUBLIC_URL:-http://localhost:8080}
+      CIBSEVEN_OIDC_CLIENT_SECRET: ${CIBSEVEN_OIDC_CLIENT_SECRET:?CIBSEVEN_OIDC_CLIENT_SECRET missing in .env}
+      CIBSEVEN_IDENTITY_CLIENT_SECRET: ${CIBSEVEN_IDENTITY_CLIENT_SECRET:?CIBSEVEN_IDENTITY_CLIENT_SECRET missing in .env}
+      KC_USER_CIBADMIN_PASSWORD: ${KC_USER_CIBADMIN_PASSWORD:?KC_USER_CIBADMIN_PASSWORD missing in .env}
+    ports:
+      - "${KEYCLOAK_PORT:-8180}:8080"
+    volumes:
+      - ./keycloak/realm-cibseven.json:/opt/keycloak/data/import/realm-cibseven.json:ro
+    healthcheck:
+      # The Keycloak image has neither curl nor wget -> bash /dev/tcp
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  cibseven:
+    # CIB seven enterprise image (needs: docker login enterprise.artifacts.cibseven.org)
+    image: ${CIBSEVEN_IMAGE:-enterprise.artifacts.cibseven.org/cibseven:run-3.0.0-ee}
+    # --production: configuration/production.yml instead of default.yml (no demo/demo admin,
+    #               authorization on, password policy, WADL off)
+    # --example:    invoice example on the classpath (also needs camunda.bpm.run.example.enabled)
+    # --oauth2:     Spring Security OAuth2 resource server for /engine-rest
+    # As soon as one module flag is given, --webapps and --rest must be listed explicitly.
+    command: ["./cibseven.sh", "--webapps", "--rest", "--example", "--oauth2", "--production"]
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+      DB_DRIVER: org.postgresql.Driver
+      DB_URL: jdbc:postgresql://cibseven-db:5432/cibseven
+      DB_USERNAME: ${CIBSEVEN_DB_USER:-cibseven}
+      DB_PASSWORD: ${CIBSEVEN_DB_PASSWORD:?CIBSEVEN_DB_PASSWORD missing in .env}
+      # AI agent connector + agentic ad hoc sub processes (off by default under --production,
+      # this switches it on). MCP REST API (/mcp) stays off.
+      AI_AGENT_ENABLED: "true"
+      MCP_ENABLED: "false"
+      # LLM access for the AI agent connector – the key lives only in .env.
+      # Any OpenAI-compatible endpoint works (OpenAI, Azure OpenAI, OpenRouter, Ollama, ...).
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY missing in .env}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      CIBSEVEN_CONNECT_AI_AGENT_DEFAULT_MODEL: ${AI_DEFAULT_MODEL:-gpt-6-luna}
+      # Loads ./cibseven/application.yaml on top of production.yml (higher priority)
+      SPRING_CONFIG_ADDITIONAL_LOCATION: file:/opt/cibseven/config/
+      # Values for the placeholders in ./cibseven/application.yaml
+      KEYCLOAK_PUBLIC_URL: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8180}
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      KEYCLOAK_REALM: cibseven
+      CIBSEVEN_OIDC_CLIENT_ID: cibseven-webclient
+      CIBSEVEN_OIDC_CLIENT_SECRET: ${CIBSEVEN_OIDC_CLIENT_SECRET:?CIBSEVEN_OIDC_CLIENT_SECRET missing in .env}
+      CIBSEVEN_IDENTITY_CLIENT_ID: cibseven-identity
+      CIBSEVEN_IDENTITY_CLIENT_SECRET: ${CIBSEVEN_IDENTITY_CLIENT_SECRET:?CIBSEVEN_IDENTITY_CLIENT_SECRET missing in .env}
+    ports:
+      - "${CIBSEVEN_PORT:-8080}:8080"
+    volumes:
+      - ./cibseven/application.yaml:/opt/cibseven/config/application.yaml:ro
+      # cibseven-keycloak identity provider plugin (read-only users/groups from Keycloak).
+      # Fetch it once with ./plugin/fetch-plugin.sh – see README.
+      - ./plugin/cibseven-keycloak-run-${KEYCLOAK_PLUGIN_VERSION:-2.2.1}.jar:/camunda/configuration/userlib/cibseven-keycloak-run.jar:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      cibseven-db:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  cibseven-db-data:
+  keycloak-db-data:
