@@ -3,3 +3,6 @@
 
 # Downloaded plugin jars (fetch with keycloak/plugin/fetch-plugin.sh)
 keycloak/plugin/*.jar
+
+# License key files (see README, "License key")
+**/cibseven-license.txt

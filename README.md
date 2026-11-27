@@ -28,7 +28,7 @@ from a local `.env` file, which is git-ignored.
 ```
 cibseven-compose/
 ├── README.md                        this document
-├── .gitignore                       excludes .env and downloaded plugin jars
+├── .gitignore                       excludes .env, downloaded plugin jars and license files
 ├── keycloak/                        Setup A: OAuth2 / SSO with Keycloak
 │   ├── docker-compose.yml           Run variant
 │   ├── docker-compose.wildfly.yml   WildFly variant
@@ -511,11 +511,7 @@ test passwords work when creating users in the webclient and for `CIBSEVEN_ADMIN
 CIBSEVEN_PASSWORD_POLICY=true
 ```
 
-Then recreate the container (for WildFly add `-f docker-compose.wildfly.yml`; no rebuild needed):
-
-```bash
-docker compose up -d cibseven
-```
+Then apply it as described in [Applying `.env` changes](#applying-env-changes) (no rebuild needed).
 
 How it is wired: Run sets `camunda.bpm.generic-properties.properties.enable-password-policy:
 ${CIBSEVEN_PASSWORD_POLICY:false}` in `cibseven/application.yaml`, overriding `production.yml`.
@@ -550,11 +546,8 @@ the server key from `.env`. Anything typed into that field is stored in plain te
 BPMN XML. The server key is only sent to `OPENAI_BASE_URL`. A task that points to a different
 endpoint needs its own key.
 
-After changing a value in `.env`, recreate the container (a plain restart keeps the old environment):
-
-```bash
-docker compose up -d cibseven
-```
+After changing a value in `.env`, apply it as described in
+[Applying `.env` changes](#applying-env-changes) (a plain restart keeps the old environment).
 
 The MCP REST API (`/mcp`, exposes the engine REST API as MCP tools) stays off. To switch it on, set
 `MCP_ENABLED: "true"` in `docker-compose.yml`. Read the MCP
@@ -580,11 +573,7 @@ In `.env` of the setup:
 CIBSEVEN_BPM_PROVIDER=org.cibseven.webapp.providers.SevenDirectProviderEE
 ```
 
-Then recreate the container (Run; for WildFly add `-f docker-compose.wildfly.yml`):
-
-```bash
-docker compose up -d cibseven
-```
+Then apply it as described in [Applying `.env` changes](#applying-env-changes) (no rebuild needed).
 
 All compose files pass the value as the environment variable `CIBSEVEN_WEBCLIENT_BPM_PROVIDER`.
 Environment variables take precedence over every configuration file, so this works the same in Run
@@ -609,6 +598,35 @@ by setting `SevenProviderEE` again or removing the line from `.env`.
 
 ---
 
+## License key (enterprise edition)
+
+Some webclient features of the enterprise edition need a license key from the CIB seven support
+team, e.g. process instance search, audit log, batch operations, process restart/modification,
+reports and the metrics charts. Without a key they show "License Required"; everything else works.
+Documentation: [License keys](https://docs.cibseven.org/manual/latest/user-guide/license-use/) and
+[entering the key in the webclient](https://docs.cibseven.org/manual/latest/webapps/admin/system-management/).
+
+**Option 1 – in the webclient:** log in as `cibadmin`, open *Admin → System → License key* and paste
+the key. It is stored in the engine database. In these setups it doesn't survive recreating the
+`cibseven` container (`down`/`up`, `.env` changes, new image): the stored key is encrypted with the
+webclient's JWT secret, and the image generates a new one for every new container (E5). Afterwards
+the key has to be entered again, unless a license file exists (option 2). With
+`SevenDirectProviderEE` the key is stored without the JWT secret and survives.
+
+**Option 2 – license file (survives recreation):** put the key into `cibseven-license.txt` in the
+setup's folder (it is git-ignored) and mount it at the default location, the home directory of
+the user `camunda` in the Run and WildFly images, by adding to `volumes:` of the `cibseven` service:
+
+```yaml
+      - ./cibseven-license.txt:/camunda/.cibseven/cibseven-license.txt:ro
+```
+
+The webclient reads the file whenever the database holds no usable key, and saves it to the
+database when an admin opens the webclient. A different path can be set with
+`cibseven.webclient.license.file.path` (environment variable `CIBSEVEN_WEBCLIENT_LICENSE_FILE_PATH`).
+
+---
+
 ## Security
 
 ### Explicit decisions for this environment
@@ -622,7 +640,7 @@ before reusing the setup elsewhere.
 | E2 | **AI agent switched on** (`AI_AGENT_ENABLED=true`, off by default under `--production`) | `docker-compose.yml` | Process data (variables, documents, prompts) is sent to an external LLM provider. Agents can call tools, e.g. start processes or ad hoc activities, with the engine permissions of the process | Set `AI_AGENT_ENABLED: "false"`; otherwise use an approved provider/endpoint and restrict which processes use agents |
 | E3 | Keycloak/LDAP: **all permissions for the user id `mary`** (`admin-auth.administrator-user-name: mary`), only so the invoice example can start (see [The invoice example](#the-invoice-example)). No such user exists | `cibseven/application.yaml`, `wildfly/cli/ldap.cli`, `keycloak.cli` | If a user with the id `mary` is ever created in Keycloak or LDAP, they are a full admin immediately | Remove the line together with E1, then delete the `mary` entries under *Admin → Authorizations* (they stay in the DB) |
 | E4 | **Admin user `cibadmin`**, created by the realm import (Keycloak), `ldap-seed` (LDAP) or `camunda.bpm.admin-user` / the `admin-user` job (internal), password from `.env` | `realm-cibseven.json`, `ldap/seed.ldif.tmpl`, `internal/cibseven/application.yaml` | A known account with full admin rights | Replace with real users and groups from your directory |
-| E5 | **Webclient JWT secret generated per container start** (image default, not configured) | image default | Sessions are lost on every container restart; doesn't work with several CIB seven nodes | Set a fixed `cibseven.webclient.authentication.jwtSecret` from a secret store |
+| E5 | **Webclient JWT secret generated per container start** (image default, not configured) | image default | Sessions are lost on every container restart; doesn't work with several CIB seven nodes; a license key entered in the webclient is lost when the container is recreated ([License key](#license-key-enterprise-edition)) | Set a fixed `cibseven.webclient.authentication.jwtSecret` from a secret store |
 | E6 | **Swagger UI / OpenAPI of the webclient left on** (production default) | `/webapp/swagger-ui`, `/webapp/v3/api-docs` | Exposes the API description | `springdoc.api-docs.enabled=false`, `springdoc.swagger-ui.enabled=false` |
 | E7 | **No container hardening** (default capabilities, writable root filesystem, no resource limits) | `docker-compose.yml` | Larger impact if a container is compromised; no protection against resource exhaustion | `read_only`, `cap_drop: [ALL]`, `security_opt: no-new-privileges`, memory/CPU limits |
 | E8 | Keycloak: **no password policy in the realm** (the realm import fails if a password from `.env` violates it) | `realm-cibseven.json` | Weak passwords are accepted | Set a policy in the admin console (Authentication → Policies), e.g. `length(12) and notUsername and notEmail` |
@@ -632,7 +650,7 @@ before reusing the setup elsewhere.
 | E12 | WildFly: **default filter written directly into the engine database** by the `default-filter` job | `wildfly/create-default-filter.sh` | Bypasses the engine API; relies on the `act_ru_filter` table layout of CIB seven 3.0 | Create filters through the webclient or REST API instead; check the job after engine upgrades |
 | E13 | Internal: **demo users of the invoice example stay in the database** (`demo`, `john`, `mary`, `peter`), **locked** by the `lock-demo-users` job: default passwords (= user name) replaced with random ones, `demo` removed from `camunda-admin` | engine database, `internal/scripts/lock-demo-users.sh` | Between the engine start and the end of the job (seconds) the default passwords work; an admin who sets a new password reactivates the account; the job relies on the identity table layout of CIB seven 3.0 | Disable the example (E1) and delete the users. Deleting only `demo` makes the example recreate all of them |
 | E14 | WildFly internal: **initial admin written directly into the engine database** by the `admin-user` job; the password policy is not checked | `wildfly/create-admin-user.sh` | A weak `CIBSEVEN_ADMIN_PASSWORD` is accepted; relies on the identity table layout of CIB seven 3.0 | Use a strong password; change it in the webclient after the first login |
-| E15 | **Engine password policy off** for quick testing (`CIBSEVEN_PASSWORD_POLICY=false`, default in all setups; `production.yml` would switch it on) | `.env`, `cibseven/application.yaml`, `wildfly/cli/common.cli` | Users managed by CIB seven (internal setup) can get weak passwords, incl. `CIBSEVEN_ADMIN_PASSWORD` | `CIBSEVEN_PASSWORD_POLICY=true` in `.env`, then `docker compose up -d cibseven` (see [Password policy](#password-policy)); set new passwords for users created while it was off |
+| E15 | **Engine password policy off** for quick testing (`CIBSEVEN_PASSWORD_POLICY=false`, default in all setups; `production.yml` would switch it on) | `.env`, `cibseven/application.yaml`, `wildfly/cli/common.cli` | Users managed by CIB seven (internal setup) can get weak passwords, incl. `CIBSEVEN_ADMIN_PASSWORD` | `CIBSEVEN_PASSWORD_POLICY=true` in `.env`, then `docker compose down` and `up -d` (see [Password policy](#password-policy)); set new passwords for users created while it was off |
 
 ### General production hardening
 
@@ -736,6 +754,26 @@ The first removes the Run variant, the second the WildFly variant. They are sepa
 each one only removes itself. The locally built WildFly image stays; remove it with
 `docker image rm cibseven-wildfly:<keycloak|ldap|internal>` if needed.
 
+### Applying `.env` changes
+
+Environment variables are fixed when a container is created; `restart` keeps the old values. Recreate
+the stack instead. `down` without `-v` keeps all data (databases, Keycloak realm, LDAP):
+
+```bash
+docker compose down
+```
+
+```bash
+docker compose up -d
+```
+
+For the WildFly variant add `-f docker-compose.wildfly.yml` to both commands. Only recreating
+`cibseven` (`docker compose up -d cibseven`, `--force-recreate`) works with Docker Compose, but not
+with podman-compose: it keeps the old container (exit 125), because Podman ties the one-off job
+containers to `cibseven`. The one-off jobs run again on `up` and change nothing that already exists.
+
+### Changing `application.yaml`
+
 To change the configuration, edit `cibseven/application.yaml` and run `docker compose restart cibseven`.
 The file is loaded via `SPRING_CONFIG_ADDITIONAL_LOCATION` on top of
 `/camunda/configuration/production.yml` and overrides its values.
@@ -760,14 +798,14 @@ docker compose start cibseven
 |---|---|
 | `... missing in .env` on start | `.env` is missing or a variable is empty. Run `cp env.example .env` and fill it in |
 | `OPENAI_API_KEY missing in .env` | AI agent is on and needs a key. Add `OPENAI_API_KEY` (see `env.example`) |
-| AI agent task fails with 401/404 from the LLM | Wrong key, `OPENAI_BASE_URL` or model name. Changes in `.env` need `docker compose up -d cibseven` |
+| AI agent task fails with 401/404 from the LLM | Wrong key, `OPENAI_BASE_URL` or model name. Changes in `.env` need `docker compose down` and `up -d` ([Applying `.env` changes](#applying-env-changes)) |
 | Image pull fails with `unauthorized` | Run `docker login enterprise.artifacts.cibseven.org` (credentials expire) |
 | Keycloak keeps restarting | `docker compose logs keycloak`. The realm import fails if a placeholder from `.env` is missing or a value is invalid |
 | Keycloak: "Invalid parameter: redirect_uri" | `CIBSEVEN_PUBLIC_URL` doesn't match the browser URL. Re-import the realm (`down -v`) or fix the redirect URI in the admin console |
 | Login OK, then 401 on `/engine-rest` | Issuer mismatch: `KEYCLOAK_PUBLIC_URL` must exactly match the browser URL, port included |
 | Webclient shows no menus / "no permissions" | The user is not in `camunda-admin` and has no authorizations |
-| Internal (Run): CIB seven fails at startup while creating the admin user | With `CIBSEVEN_PASSWORD_POLICY=true`, `CIBSEVEN_ADMIN_PASSWORD` violates the password policy (10+ characters, upper/lower case, digit, special character, not containing the user id). Fix it in `.env`, then `docker compose up -d` |
-| Bpm provider switch has no effect | `.env` changes need `docker compose up -d cibseven` (a restart keeps the old environment). Check that `CIBSEVEN_BPM_PROVIDER` holds the full class name |
+| Internal (Run): CIB seven fails at startup while creating the admin user | With `CIBSEVEN_PASSWORD_POLICY=true`, `CIBSEVEN_ADMIN_PASSWORD` violates the password policy (10+ characters, upper/lower case, digit, special character, not containing the user id). Fix it in `.env`, then `docker compose down` and `docker compose up -d` |
+| Bpm provider / password policy switch has no effect | `.env` changes need `docker compose down` and `up -d` (a restart keeps the old environment; with Podman, `up -d cibseven` keeps the old container). Check that `CIBSEVEN_BPM_PROVIDER` holds the full class name |
 | CIB seven exits with `NullPointerException` in `@PostDeploy` | `administrator-user-name: mary` is missing under `admin-auth` (see [The invoice example](#the-invoice-example)). Then start again: `docker compose up -d` |
 | Keycloak setup: `cibseven` fails to start, mount error for `cibseven-keycloak-run-….jar` | Plugin jar not downloaded. Run `./plugin/fetch-plugin.sh` |
 | Keycloak setup: engine fails with errors from `org.cibseven.community.keycloak` | `cibseven-identity` lacks the roles `query-users`, `view-users`, `query-groups`, or its secret differs from `.env`; or the plugin version doesn't match CIB seven |
@@ -781,6 +819,24 @@ docker compose start cibseven
 | WildFly: build fails at "Patching engine-rest web.xml failed" | The base image's `web.xml` changed (other CIB seven version). Adjust the `sed` expressions in `wildfly/Dockerfile` |
 | WildFly: webclient login works, but pages show 401 errors | The REST API didn't get the JWT patch, or the webclient forwards Keycloak tokens. Rebuild (`build cibseven`) and check `accessTokenToEngineRest: false` in `cibseven-webclient-wildfly.yaml` |
 | WildFly: `default-filter` exits with an error | It waits up to 15 minutes for the engine tables. Check `docker compose -f docker-compose.wildfly.yml logs cibseven`, then run the job again: `docker compose -f docker-compose.wildfly.yml up default-filter` |
+
+## Further information
+
+**API documentation.** The URLs assume the default port `8080` (`CIBSEVEN_PORT`). They work the same in the Run and WildFly variants.
+
+| What | Where |
+|---|---|
+| Swagger UI of the webclient API | http://localhost:8080/webapp/swagger-ui |
+| OpenAPI description of the webclient API (JSON) | http://localhost:8080/webapp/v3/api-docs |
+| Engine REST API (base URL) | http://localhost:8080/engine-rest |
+| Engine REST API documentation (3.0) | https://docs.cibseven.org/rest/cibseven/3.0/ |
+
+The Swagger UI is turned on by the production configuration's defaults. Security item E6 explains how to turn it off. It documents the webclient's own API, not the engine REST API. Use the online documentation for the engine REST API. The Run variant doesn't start the separate engine REST Swagger UI module (`--swaggerui`).
+
+**SBOMs (software bill of materials)** of the enterprise distributions used here. Downloading them needs the same credentials as `docker login enterprise.artifacts.cibseven.org`:
+
+- CIB seven Run 3.0.0 EE: https://artifacts.cibseven.org/repository/enterprise/org/cibseven/bpm/run/cibseven-bpm-run-root/3.0.0-ee/cibseven-bpm-run-root-3.0.0-ee-aggregate-sbom.xml
+- CIB seven WildFly 3.0.0 EE: https://artifacts.cibseven.org/repository/enterprise/org/cibseven/bpm/wildfly/cibseven-wildfly/3.0.0-ee/cibseven-wildfly-3.0.0-ee-aggregate-sbom.xml
 
 ## References
 
