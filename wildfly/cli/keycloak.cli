@@ -8,5 +8,9 @@ batch
 
 /subsystem=camunda-bpm-platform/process-engines=default:list-add(name=plugins,index=0,value={"class"=>"org.cibseven.community.keycloak.plugin.KeycloakIdentityProviderPlugin","properties"=>{"keycloakIssuerUrl"=>"${env.KEYCLOAK_ISSUER_URL}","keycloakAdminUrl"=>"${env.KEYCLOAK_ADMIN_URL}","clientId"=>"${env.CIBSEVEN_IDENTITY_CLIENT_ID}","clientSecret"=>"${env.CIBSEVEN_IDENTITY_CLIENT_SECRET}","useUsernameAsCamundaUserId"=>"true","useGroupPathAsCamundaGroupId"=>"true","cacheEnabled"=>"true","maxCacheSize"=>"500","cacheExpirationTimeoutMin"=>"5"}})
 
+# All permissions for the user id "mary" (no such user exists): needed by the invoice example
+# only, because the read-only identity provider skips its demo data (README, decision E3).
+/subsystem=camunda-bpm-platform/process-engines=default:list-add(name=plugins,value={"class"=>"org.cibseven.bpm.engine.impl.plugin.AdministratorAuthorizationPlugin","properties"=>{"administratorUserName"=>"mary"}})
+
 run-batch
 stop-embedded-server

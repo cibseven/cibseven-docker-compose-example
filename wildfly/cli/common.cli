@@ -4,12 +4,13 @@ embed-server --server-config=standalone.xml
 batch
 
 # production.yml equivalents (authorizationEnabled is already true in the distribution)
-/subsystem=camunda-bpm-platform/process-engines=default:map-put(name=properties,key=enablePasswordPolicy,value=true)
+# Password policy for users managed by the engine: OFF by default for quick testing,
+# switched on at runtime with CIBSEVEN_PASSWORD_POLICY=true (README, decision E15).
+/subsystem=camunda-bpm-platform/process-engines=default:map-put(name=properties,key=enablePasswordPolicy,value="${env.CIBSEVEN_PASSWORD_POLICY:false}")
 /subsystem=camunda-bpm-platform/process-engines=default:map-put(name=properties,key=deserializationTypeValidationEnabled,value=true)
 
 # admin-auth equivalent: all permissions for group camunda-admin.
-# administratorUserName "mary": needed by the invoice example only (README, decision E3).
-/subsystem=camunda-bpm-platform/process-engines=default:list-add(name=plugins,value={"class"=>"org.cibseven.bpm.engine.impl.plugin.AdministratorAuthorizationPlugin","properties"=>{"administratorGroupName"=>"camunda-admin","administratorUserName"=>"mary"}})
+/subsystem=camunda-bpm-platform/process-engines=default:list-add(name=plugins,value={"class"=>"org.cibseven.bpm.engine.impl.plugin.AdministratorAuthorizationPlugin","properties"=>{"administratorGroupName"=>"camunda-admin"}})
 
 run-batch
 stop-embedded-server

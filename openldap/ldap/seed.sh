@@ -17,12 +17,13 @@ if ldap ldapsearch -b "ou=people,${LDAP_BASE_DN}" -s base dn >/dev/null 2>&1; th
   exit 0
 fi
 
-CIBADMIN_HASH=$(slappasswd -h '{SSHA}' -s "${LDAP_USER_CIBADMIN_PASSWORD}")
+ADMIN_HASH=$(slappasswd -h '{SSHA}' -s "${CIBSEVEN_ADMIN_PASSWORD}")
 
 sed -e "s|@BASE_DN@|${LDAP_BASE_DN}|g" \
-    -e "s|@CIBADMIN_PASSWORD_HASH@|${CIBADMIN_HASH}|g" \
+    -e "s|@ADMIN_ID@|${CIBSEVEN_ADMIN_USER}|g" \
+    -e "s|@ADMIN_PASSWORD_HASH@|${ADMIN_HASH}|g" \
     /seed/seed.ldif.tmpl > /tmp/seed.ldif
 
 ldap ldapadd -f /tmp/seed.ldif
 rm -f /tmp/seed.ldif
-echo "LDAP seeded: user cibadmin (group camunda-admin)."
+echo "LDAP seeded: user ${CIBSEVEN_ADMIN_USER} (group camunda-admin)."

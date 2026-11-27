@@ -55,6 +55,11 @@ plugin:
 
 camunda:
   bpm:
+    # Password policy for users managed by the engine (production.yml: on). OFF by default for
+    # quick testing; set CIBSEVEN_PASSWORD_POLICY=true in .env to switch it on (README, E15).
+    generic-properties:
+      properties:
+        enable-password-policy: ${CIBSEVEN_PASSWORD_POLICY:false}
     # Built-in OAuth2 identity provider OFF – it is writable (DB-backed) and only knows the
     # current token. Users/groups come from the cibseven-keycloak plugin instead.
     oauth2:

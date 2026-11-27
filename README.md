@@ -1,10 +1,11 @@
-# CIB seven Run 3.0.0 EE – Docker Compose setups (Keycloak & OpenLDAP)
+# CIB seven 3.0.0 EE – Docker Compose setups (Keycloak, OpenLDAP, internal users)
 
-Two self-contained Docker Compose setups for **CIB seven 3.0.0 enterprise edition** in
+Three self-contained Docker Compose setups for **CIB seven 3.0.0 enterprise edition** in
 **production configuration**, including the **invoice example**:
 
 - **`keycloak/`**: Keycloak as the OAuth2 / OIDC identity provider (SSO for the webclient, JWT-secured engine REST API), users and groups read-only via the cibseven-keycloak plugin
 - **`openldap/`**: OpenLDAP as the user and group directory (engine LDAP identity provider plugin)
+- **`internal/`**: CIB seven's own user management (users and groups in the engine database, managed in the webclient)
 
 Each setup comes in two variants:
 
@@ -12,8 +13,9 @@ Each setup comes in two variants:
 - **WildFly** (`docker-compose.wildfly.yml`): CIB seven on WildFly, built from
   `enterprise.artifacts.cibseven.org/cibseven:wildfly-3.0.0-ee`. See [WildFly variant](#wildfly-variant)
 
-The **AI agent connector** is switched on in both setups. Each setup has exactly **one user**,
-the admin `cibadmin`.
+The **AI agent connector** is switched on everywhere. The Keycloak and LDAP setups have exactly
+**one user**, the admin `cibadmin`. The internal setup has the admin `cibadmin` plus the demo users
+of the invoice example (see [Setup C](#setup-c--internal-user-management)).
 
 There are no secrets in the repository. All passwords, client secrets and the LLM API key come
 from a local `.env` file, which is git-ignored.
@@ -42,11 +44,19 @@ cibseven-compose/
 │   ├── cibseven/application.yaml    Run: CIB seven overrides (LDAP plugin, example)
 │   ├── cibseven/cibseven-webclient-wildfly.yaml  WildFly: webclient configuration
 │   └── ldap/seed.sh, seed.ldif.tmpl admin user and admin group
-└── wildfly/                         WildFly image build, shared by both setups
+├── internal/                        Setup C: internal user management
+│   ├── docker-compose.yml           Run variant
+│   ├── docker-compose.wildfly.yml   WildFly variant
+│   ├── env.example                  template for .env (shared by both variants)
+│   ├── cibseven/application.yaml    Run: CIB seven overrides (initial admin, example)
+│   ├── cibseven/cibseven-webclient-wildfly.yaml  WildFly: webclient configuration
+│   └── scripts/lock-demo-users.sh   one-off job: protects the invoice example's demo users
+└── wildfly/                         WildFly image build, shared by all setups
     ├── Dockerfile                   production changes on top of the EE WildFly image
     ├── cli/*.cli                    standalone.xml changes (engine, LDAP / Keycloak plugin)
     ├── keycloak-module.xml          WildFly module for the Keycloak plugin
-    └── create-default-filter.sh     one-off job: task filter "All tasks"
+    ├── create-default-filter.sh     one-off job: task filter "All tasks"
+    └── create-admin-user.sh         one-off job: initial admin (internal setup)
 ```
 
 All variants use port 8080, so run only one at a time (or change `CIBSEVEN_PORT`).
@@ -57,13 +67,15 @@ All variants use port 8080, so run only one at a time (or change `CIBSEVEN_PORT`
 
 | Topic | Implementation |
 |---|---|
-| `production.yml` instead of `default.yml` | Started with `--production`: no `demo/demo` admin from the config, authorization enabled, password policy, deserialization type validation, WADL disabled |
+| `production.yml` instead of `default.yml` | Started with `--production`: no `demo/demo` admin from the config, authorization enabled, deserialization type validation, WADL disabled |
+| Engine password policy | **Off** by default for quick testing (`production.yml` switches it on). One switch in `.env`, see [Password policy](#password-policy) |
 | Invoice example | Kept: `--example` plus `camunda.bpm.run.example.enabled: true` (the production config does not enable it on its own). See [The invoice example](#the-invoice-example) |
 | Default task filter | `camunda.bpm.filter.create: All tasks` creates the filter "All tasks" on first start (`production.yml` doesn't). See [Default task filter](#default-task-filter) |
 | Database | PostgreSQL 17 instead of H2 (separate database per service, persistent volumes) |
 | Secrets | Only via `.env` / environment variables; config files contain `${...}` placeholders only |
-| Users and admin permissions | One user, `cibadmin`, managed in Keycloak or LDAP (read-only in CIB seven). Group `camunda-admin` gets all permissions via `camunda.bpm.run.admin-auth` |
-| Engine REST API | Keycloak: only valid Keycloak JWTs (signature, issuer and audience checked). LDAP: webclient JWT or HTTP Basic, checked against LDAP |
+| Users and admin permissions | Keycloak/LDAP: one user, `cibadmin`, managed in Keycloak or LDAP (read-only in CIB seven); group `camunda-admin` gets all permissions via `camunda.bpm.run.admin-auth`. Internal: initial admin `cibadmin` from `.env` (`camunda.bpm.admin-user`), further users in the webclient |
+| Engine REST API | Keycloak: only valid Keycloak JWTs (signature, issuer and audience checked). LDAP / internal: webclient JWT or HTTP Basic, checked against LDAP / the engine's user table |
+| Webclient bpm provider | `SevenProviderEE` (via the REST API), switchable to `SevenDirectProviderEE` in `.env`. See [Webclient bpm provider](#webclient-bpm-provider) |
 | AI agent | **On** (`AI_AGENT_ENABLED=true`; `--production` alone would switch it off). LLM API key only in `.env` (`OPENAI_API_KEY`), never in BPMN. See [AI agent](#ai-agent) |
 | MCP REST API (`/mcp`) | Off (`MCP_ENABLED=false`) |
 | Webclient modeler | **On** in both variants. Run: `cibseven.webclient.modeler.enabled: true` plus the element template paths in `cibseven/application.yaml` (`production.yml` leaves it off). WildFly: on by default in the webclient's own configuration |
@@ -158,7 +170,7 @@ realm. The stack is ready when every service is `healthy`.
 | What | URL / login |
 |---|---|
 | CIB seven webclient | http://localhost:8080/webapp/ (redirects to Keycloak) |
-| Admin user | `cibadmin` / `KC_USER_CIBADMIN_PASSWORD`, group `camunda-admin`, all permissions |
+| Admin user | `CIBSEVEN_ADMIN_USER` / `CIBSEVEN_ADMIN_PASSWORD` (default `cibadmin`), group `camunda-admin`, all permissions |
 | Keycloak admin console | http://localhost:8180/admin/, `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` |
 
 Log in to the webclient as `cibadmin`. Expected: *Admin → Users* lists `cibadmin`, *Admin → Groups*
@@ -239,13 +251,13 @@ old LDAP volumes (different paths and format). Start fresh with `docker compose 
 | What | URL / login |
 |---|---|
 | CIB seven webclient | http://localhost:8080/webapp/ (login form) |
-| Admin user | `cibadmin` / `LDAP_USER_CIBADMIN_PASSWORD`, group `camunda-admin`, all permissions |
+| Admin user | `CIBSEVEN_ADMIN_USER` / `CIBSEVEN_ADMIN_PASSWORD` (default `cibadmin`), group `camunda-admin`, all permissions |
 | LDAP from the host | `ldap://localhost:1389` (container port 3890), bind DN `cn=admin,dc=cibseven,dc=local` / `LDAP_ADMIN_PASSWORD` |
 
 ```bash
 source .env
-curl -s -u "cibadmin:$LDAP_USER_CIBADMIN_PASSWORD" http://localhost:8080/engine-rest/user
-curl -s -u "cibadmin:$LDAP_USER_CIBADMIN_PASSWORD" "http://localhost:8080/engine-rest/process-definition?key=invoice"
+curl -s -u "$CIBSEVEN_ADMIN_USER:$CIBSEVEN_ADMIN_PASSWORD" http://localhost:8080/engine-rest/user
+curl -s -u "$CIBSEVEN_ADMIN_USER:$CIBSEVEN_ADMIN_PASSWORD" "http://localhost:8080/engine-rest/process-definition?key=invoice"
 ```
 
 Expected: the LDAP user `cibadmin` and the invoice process definitions. A missing or wrong
@@ -271,18 +283,101 @@ docker compose exec openldap ldapsearch -x -H ldap://localhost:3890 -D cn=readon
 
 ---
 
+## Setup C – Internal user management
+
+### Architecture
+
+```
+Browser ─▶ cibseven :8080 /webapp ── login ─▶ engine identity service ─▶ act_id_* tables (PostgreSQL)
+REST client ─▶ /engine-rest (HTTP Basic or webclient token)
+```
+
+- **CIB seven's own user management** (default identity service, **writable**): users, groups,
+  memberships and tenants are stored in the engine database and managed in the webclient under
+  *Admin → Users / Groups*. The engine's password policy is off by default; switch it on with
+  `CIBSEVEN_PASSWORD_POLICY=true` (see [Password policy](#password-policy)).
+- **Initial admin** from `.env` (`CIBSEVEN_ADMIN_USER`, `CIBSEVEN_ADMIN_PASSWORD`), created on the
+  first start by `camunda.bpm.admin-user`, together with group `camunda-admin` and all permissions.
+  An existing user is never changed; change the password in the webclient afterwards.
+- **Webclient**: default `SevenUserProvider` (login form).
+- **Engine REST API**: `composite` authentication from `production.yml` (webclient JWT or HTTP Basic
+  with a CIB seven user).
+- No identity provider container: only `cibseven`, `cibseven-db` and the one-off job
+  `lock-demo-users`, which protects the invoice example's demo users (see below).
+
+### Start
+
+```bash
+cd internal
+cp env.example .env
+```
+
+Replace every `change-me` in `.env`. If you switch the password policy on
+(`CIBSEVEN_PASSWORD_POLICY=true`), `CIBSEVEN_ADMIN_PASSWORD` must satisfy it, otherwise CIB seven
+fails at startup (Run). Then:
+
+```bash
+docker compose up -d
+```
+
+### Test
+
+| What | URL / login |
+|---|---|
+| CIB seven webclient | http://localhost:8080/webapp/ (login form) |
+| Admin user | `CIBSEVEN_ADMIN_USER` / `CIBSEVEN_ADMIN_PASSWORD` (default `cibadmin`), group `camunda-admin` |
+| Demo users of the invoice example | `demo`, `john`, `mary`, `peter`: **locked** by `lock-demo-users` (random passwords; an admin can set new ones in the webclient). `demo` is no admin (decision E13) |
+
+```bash
+source .env
+curl -s -u "$CIBSEVEN_ADMIN_USER:$CIBSEVEN_ADMIN_PASSWORD" http://localhost:8080/engine-rest/user
+```
+
+Expected: `cibadmin` and the four demo users.
+
+### Notes and limitations
+
+- **The invoice example runs its full demo-data step here**, because the identity service is
+  writable: it creates the users `demo` (member of `camunda-admin`), `john`, `mary`, `peter` with
+  password = user name, the groups `sales`, `accounting`, `management`, their permissions, and the
+  filters "My Tasks", "My Group Tasks", "Accounting", "John's Tasks", "Mary's Tasks",
+  "Peter's Tasks", "All Tasks".
+- **The demo users are protected** by the one-off job `lock-demo-users`
+  (`scripts/lock-demo-users.sh`, Run and WildFly). Once `cibseven` is healthy it replaces every
+  demo password that is still the default (= user name) with a random one that is never stored
+  or shown, and removes `demo` from `camunda-admin`. So `cibadmin` is the only working login, and
+  the only admin. Passwords already changed are left alone; the job is safe to run again:
+  `docker compose up lock-demo-users`.
+- **`mary` is a real, normal user here.** The example's demo-data step gives her exactly the task
+  permission it needs, so the `administrator-user-name: mary` workaround of the Keycloak/LDAP
+  setups (E3) is not used, and `mary` has **no** admin rights. Her account is locked like the others.
+- The users can't simply be deleted: without `demo` the example creates all demo users again on
+  the next start (it checks for `demo`). To get rid of them for good, disable the example (E1).
+- Users are only in this database: `docker compose down -v` deletes them.
+
+---
+
 ## WildFly variant
 
-Both setups also run on **CIB seven WildFly EE**. Keycloak, the realm, OpenLDAP, the seed job,
+All setups also run on **CIB seven WildFly EE**. Keycloak, the realm, OpenLDAP, the seed job,
 the database and `.env` are the same; only the `cibseven` service differs.
 
 ```bash
 docker compose -f docker-compose.wildfly.yml up -d --build
 ```
 
-Run it from `keycloak/` or `openldap/`. Every `docker compose` command for this variant needs
-`-f docker-compose.wildfly.yml` (e.g. `logs`, `down -v`). The variant has its **own project name**
-(`cibseven-keycloak-wildfly`, `cibseven-openldap-wildfly`), so its containers and volumes are
+Run it from `keycloak/`, `openldap/` or `internal/`. **Every `docker compose` command for this
+variant needs `-f docker-compose.wildfly.yml`** (e.g. `logs`, `ps`, `down -v`). A plain
+`docker compose down -v` reads `docker-compose.yml` and therefore removes the **Run** variant
+(including its volumes), not WildFly. To avoid typing `-f` each time, set it once per shell; this
+works with Docker Compose and podman-compose (podman-compose ignores `COMPOSE_FILE` in `.env`):
+
+```bash
+export COMPOSE_FILE=docker-compose.wildfly.yml
+```
+
+Remove it again with `unset COMPOSE_FILE` before working with the Run variant. The variant has its **own project name**
+(`cibseven-keycloak-wildfly`, `cibseven-openldap-wildfly`, `cibseven-internal-wildfly`), so its containers and volumes are
 separate from the Run variant: the Keycloak realm and LDAP are bootstrapped again, and the engine
 database doesn't mix Run and WildFly deployments. Stop the Run variant first, because both use the
 same ports. Keycloak and LDAP service definitions are taken over from `docker-compose.yml` via
@@ -295,12 +390,13 @@ applies, so the image is built from `wildfly/Dockerfile` on top of the EE WildFl
 
 | Topic | Run | WildFly |
 |---|---|---|
-| Production settings | `--production` (`production.yml`) | `standalone.xml`, set at build time by `wildfly/cli/common.cli`: authorization (already on), password policy, deserialization type validation |
-| Engine REST API | Keycloak JWTs (Keycloak setup) / webclient token or HTTP Basic (LDAP setup) | **Webclient tokens only**, in both setups. The stock image ships `PseudoAuthenticationProvider` (user name taken from a request header, "not for production"). The build replaces it with `JwtTokenAuthenticationProvider` in the `web.xml` of `engine-rest`, which is deployed exploded for that. No HTTP Basic, no Keycloak tokens: WildFly has no Spring Security resource server |
+| Production settings | `--production` (`production.yml`) | `standalone.xml`, set at build time by `wildfly/cli/common.cli`: authorization (already on), password policy (`${env.CIBSEVEN_PASSWORD_POLICY:false}`, resolved at runtime), deserialization type validation |
+| Engine REST API | Keycloak JWTs (Keycloak setup) / webclient token or HTTP Basic (LDAP and internal setups) | **Webclient tokens only**, in all setups. The stock image ships `PseudoAuthenticationProvider` (user name taken from a request header, "not for production"). The build replaces it with `JwtTokenAuthenticationProvider` in the `web.xml` of `engine-rest`, which is deployed exploded for that. No HTTP Basic, no Keycloak tokens: WildFly has no Spring Security resource server |
 | Webclient | `application.yaml` | `cibseven/cibseven-webclient-wildfly.yaml`, mounted as `cibseven-webclient.yaml` into the global WildFly module `org.cibseven.config`. Keycloak setup: SSO as in Run, but `accessTokenToEngineRest: false`: the webclient talks to the REST API with its own token |
-| Identity provider | `camunda.bpm.run.ldap` / plugin jar in `userlib` | Engine plugin in `standalone.xml` (`wildfly/cli/ldap.cli`, `keycloak.cli`). The Keycloak plugin is installed as WildFly module `org.cibseven.bpm.identity.cibseven-identity-keycloak` from `cibseven-keycloak-all` (Maven Central, SHA-1 checked at build time, version `KEYCLOAK_PLUGIN_VERSION`) |
+| Identity provider | `camunda.bpm.run.ldap` / plugin jar in `userlib` / internal | Engine plugin in `standalone.xml` (`wildfly/cli/ldap.cli`, `keycloak.cli`; none for internal, build arg `IDENTITY_PROVIDER`). The Keycloak plugin is installed as WildFly module `org.cibseven.bpm.identity.cibseven-identity-keycloak` from `cibseven-keycloak-all` (Maven Central, SHA-1 checked at build time, version `KEYCLOAK_PLUGIN_VERSION`) |
 | Secrets | `${...}` in `application.yaml` | `${env.*}` expressions in `standalone.xml`, resolved by WildFly at runtime. **Nothing secret is baked into the image** |
-| Admin permissions (incl. user id `mary`) | `camunda.bpm.run.admin-auth` | `AdministratorAuthorizationPlugin` in `standalone.xml` |
+| Admin permissions | `camunda.bpm.run.admin-auth` | `AdministratorAuthorizationPlugin` in `standalone.xml` (group `camunda-admin`; for Keycloak/LDAP also the user id `mary`) |
+| Initial admin (internal) | `camunda.bpm.admin-user` | Not available outside Spring Boot. The one-off job `admin-user` creates the user, group `camunda-admin` and the membership in the engine database once `cibseven` is healthy (`wildfly/create-admin-user.sh`). The password is hashed exactly like the engine does (SHA-512 with salt), but the password policy is **not** checked |
 | Invoice example | `--example` | Deployed by default (WAR in the image), same behaviour |
 | Default task filter | `camunda.bpm.filter.create` | Not available outside Spring Boot. The one-off job `default-filter` inserts the same row (task filter "All tasks", empty query) into `act_ru_filter` once the engine has created its tables, if it doesn't exist yet (`wildfly/create-default-filter.sh`) |
 | Welcome app | – | Removed |
@@ -316,10 +412,11 @@ docker compose -f docker-compose.wildfly.yml build cibseven
 
 The URLs and the `cibadmin` login are the same as for Run. Differences:
 
-- The REST API only accepts webclient tokens, so the `curl -u cibadmin:...` examples of the LDAP
-  setup return `401` here. That is intended. Test through the webclient.
-- `docker compose -f docker-compose.wildfly.yml ps` shows `default-filter` as `Exited (0)` once
-  the filter exists.
+- The REST API only accepts webclient tokens, so the `curl -u ...` examples of the LDAP and
+  internal setups return `401` here. That is intended. Test through the webclient.
+- `docker compose -f docker-compose.wildfly.yml ps` shows `default-filter` (and in `internal/`
+  `admin-user`) as `Exited (0)` once they are done. In `internal/`, log in as the admin only after
+  `admin-user` has finished.
 
 ---
 
@@ -335,25 +432,28 @@ The example (`--example`) does the following on first start:
 - **Starts 3 instances per version** (6 in total), and moves some of them on, as described below.
 - **Task permissions:** the engine automatically grants the candidate groups of the created user
   tasks (`accounting`, `sales`) read and update permissions on those tasks. These groups don't exist
-  in Keycloak or LDAP here.
-- **No demo users, groups, filters or group permissions.** The example only creates those
-  (`demo/demo`, `john`, `mary`, `peter`, ...) when the identity service is writable. Keycloak (via the
-  plugin) and LDAP are read-only in both setups, so that step is skipped.
+  in Keycloak or LDAP here (the internal setup creates them, see below).
+- **Keycloak and LDAP: no demo users, groups, filters or group permissions.** The example only
+  creates those (`demo/demo`, `john`, `mary`, `peter`, ...) when the identity service is writable.
+  Keycloak (via the plugin) and LDAP are read-only, so that step is skipped. **Internal user
+  management is writable, so there the example creates all of them** (see [Setup C](#setup-c--internal-user-management)).
 - Serves static example resources under `/camunda-invoice/` and `/forms/`.
 
-**The user id `mary`.** While starting the instances, the example completes one demo task as
+**The user id `mary` (Keycloak and LDAP only).** While starting the instances, the example completes one demo task as
 user id `mary`, with no groups attached. That only works if `mary` has a permission on tasks
 granted to her personally. The example normally creates it in its demo-data step, which is skipped
 here. Without it, CIB seven fails at startup with a `NullPointerException` in `@PostDeploy`.
 Therefore `admin-auth` grants all permissions to the user id `mary`
 (`administrator-user-name: mary` in `cibseven/application.yaml`). **There is no user `mary`** in
-Keycloak or LDAP, so nobody can log in with it (decision E3).
+Keycloak or LDAP, so nobody can log in with it (decision E3). With internal user management
+this isn't needed: there the example creates the real user `mary` with just that task permission,
+and `lock-demo-users` locks her account (see [Setup C](#setup-c--internal-user-management)).
 
 ---
 
 ## Default task filter
 
-Both setups create the task filter **"All tasks"** on engine start, unless a filter with that name
+All setups create the task filter **"All tasks"** on engine start, unless a filter with that name
 already exists:
 
 ```yaml
@@ -370,13 +470,15 @@ camunda:
   you grant access. The invoice example's own filters ("My Tasks", "Accounting", ...) are not
   created, see [The invoice example](#the-invoice-example).
 - Renaming it later (`create: <other name>`) creates an additional filter; the old one stays.
+- In the internal setup the invoice example adds its own filters as well ("My Tasks", ...).
 
 When you add more users, grant them read access to this filter once, as `cibadmin`. Use the
-webclient under *Admin → Authorizations → Filter* (both setups), or the REST API in the LDAP setup:
+webclient under *Admin → Authorizations → Filter* (all setups), or the REST API in the LDAP and
+internal setups (Run variant):
 
 ```bash
 source .env
-AUTH="cibadmin:$LDAP_USER_CIBADMIN_PASSWORD"
+AUTH="$CIBSEVEN_ADMIN_USER:$CIBSEVEN_ADMIN_PASSWORD"
 FILTER_ID=$(curl -s -u "$AUTH" "http://localhost:8080/engine-rest/filter?name=All%20tasks" | jq -r '.[0].id')
 curl -s -u "$AUTH" -X POST http://localhost:8080/engine-rest/authorization/create \
   -H 'Content-Type: application/json' \
@@ -389,9 +491,51 @@ database, so it survives restarts and works with read-only LDAP/Keycloak.
 
 ---
 
+## Password policy
+
+CIB seven's own password policy checks passwords of users **managed by the engine**, i.e. in the
+internal setup (Setup C). It doesn't apply to Keycloak or LDAP users: their passwords live in
+Keycloak or LDAP (see E8 and P15 for those). When it is on, a password needs:
+
+- at least 10 characters,
+- at least one lower case letter, one upper case letter, one digit and one special character,
+- no parts of the user's data (e.g. the user id).
+
+**For quick testing it is off by default** in all setups and both variants (decision E15), so short
+test passwords work when creating users in the webclient and for `CIBSEVEN_ADMIN_PASSWORD`.
+`production.yml` would switch it on.
+
+**Switch it on** in the `.env` of the setup:
+
+```
+CIBSEVEN_PASSWORD_POLICY=true
+```
+
+Then recreate the container (for WildFly add `-f docker-compose.wildfly.yml`; no rebuild needed):
+
+```bash
+docker compose up -d cibseven
+```
+
+How it is wired: Run sets `camunda.bpm.generic-properties.properties.enable-password-policy:
+${CIBSEVEN_PASSWORD_POLICY:false}` in `cibseven/application.yaml`, overriding `production.yml`.
+WildFly sets the engine property `enablePasswordPolicy` to `${env.CIBSEVEN_PASSWORD_POLICY:false}` in
+`standalone.xml` (`wildfly/cli/common.cli`), which WildFly resolves at startup.
+
+Notes:
+
+- The policy only checks passwords when they are set or changed. Existing passwords stay valid
+  after switching it on.
+- With the policy on, the Run admin user (`camunda.bpm.admin-user`) is only created if
+  `CIBSEVEN_ADMIN_PASSWORD` satisfies it; otherwise CIB seven fails at startup.
+- The WildFly `admin-user` job and the `lock-demo-users` job write directly to the database and
+  never check the policy. The random passwords of `lock-demo-users` aren't usable logins anyway.
+
+---
+
 ## AI agent
 
-Both setups switch on the AI agent connector (BPMN element templates "AI Agent", "AI Agent (ad hoc
+All setups switch on the AI agent connector (BPMN element templates "AI Agent", "AI Agent (ad hoc
 sub process)" and "Knowledge Ingestor" in the webclient modeler) with `AI_AGENT_ENABLED=true`.
 The connector talks to any **OpenAI-compatible** API. It is configured only through `.env`:
 
@@ -418,6 +562,53 @@ The MCP REST API (`/mcp`, exposes the engine REST API as MCP tools) stays off. T
 
 ---
 
+## Webclient bpm provider
+
+The webclient talks to the engine through a **bpm provider** (`cibseven.webclient.bpm.provider`).
+The EE images contain two:
+
+| Provider | Class | How it reaches the engine |
+|---|---|---|
+| **SevenProviderEE** (default here) | `org.cibseven.webapp.providers.SevenProviderEE` | Over HTTP through the engine REST API (`/engine-rest`), with the logged-in user's token |
+| **SevenDirectProviderEE** | `org.cibseven.webapp.providers.SevenDirectProviderEE` | Directly through the engine's Java API, in the same JVM (Run) or the same WildFly server. No HTTP |
+
+### How to switch
+
+In `.env` of the setup:
+
+```
+CIBSEVEN_BPM_PROVIDER=org.cibseven.webapp.providers.SevenDirectProviderEE
+```
+
+Then recreate the container (Run; for WildFly add `-f docker-compose.wildfly.yml`):
+
+```bash
+docker compose up -d cibseven
+```
+
+All compose files pass the value as the environment variable `CIBSEVEN_WEBCLIENT_BPM_PROVIDER`.
+Environment variables take precedence over every configuration file, so this works the same in Run
+(where `production.yml` sets `SevenProviderEE`) and on WildFly (where the webclient has its own
+configuration). Don't set `cibseven.webclient.bpm.provider` in `application.yaml` /
+`cibseven-webclient-wildfly.yaml` instead: the environment variable would override it. Switch back
+by setting `SevenProviderEE` again or removing the line from `.env`.
+
+### What changes with SevenDirectProviderEE
+
+- **Permissions still apply.** For every call the provider sets the logged-in user, their groups and
+  tenants (from the active identity provider: Keycloak plugin, LDAP or internal) on the engine, so
+  the engine's authorization checks are the same as through the REST API.
+- **The REST API authentication no longer matters for the webclient.** In the Keycloak Run setup,
+  `accessTokenToEngineRest` and the Spring Security resource server only concern other REST
+  clients. On WildFly the webclient no longer uses its token on `/engine-rest`. The REST API itself
+  stays available and secured as before, for external clients.
+- **Only for an engine in the same application.** The webclient can no longer connect to remote
+  engines through engine REST URLs.
+- **Fewer HTTP round trips:** pages that load a lot of engine data are usually faster.
+- Login is unchanged (`SevenUserProvider` / `OAuth2UserProvider`).
+
+---
+
 ## Security
 
 ### Explicit decisions for this environment
@@ -427,10 +618,10 @@ before reusing the setup elsewhere.
 
 | # | Decision | Where | Risk | How to change |
 |---|---|---|---|---|
-| E1 | **Invoice example enabled** (`--example`, `camunda.bpm.run.example.enabled: true`) | `docker-compose.yml`, `cibseven/application.yaml` | Demo processes, decision tables and 6 instances with demo data; task permissions for the candidate groups `accounting`/`sales`; static resources under `/camunda-invoice/` and `/forms/`. Needs E3 | Remove `--example` and `camunda.bpm.run.example`, together with E3 |
+| E1 | **Invoice example enabled** (`--example`, `camunda.bpm.run.example.enabled: true`) | `docker-compose.yml`, `cibseven/application.yaml` | Demo processes, decision tables and 6 instances with demo data; task permissions for the candidate groups `accounting`/`sales`; static resources under `/camunda-invoice/` and `/forms/`. Keycloak/LDAP: needs E3. Internal: creates demo users (E13) | Remove `--example` and `camunda.bpm.run.example`, together with E3 |
 | E2 | **AI agent switched on** (`AI_AGENT_ENABLED=true`, off by default under `--production`) | `docker-compose.yml` | Process data (variables, documents, prompts) is sent to an external LLM provider. Agents can call tools, e.g. start processes or ad hoc activities, with the engine permissions of the process | Set `AI_AGENT_ENABLED: "false"`; otherwise use an approved provider/endpoint and restrict which processes use agents |
-| E3 | **All permissions for the user id `mary`** (`admin-auth.administrator-user-name: mary`), only so the invoice example can start (see [The invoice example](#the-invoice-example)). No such user exists | `cibseven/application.yaml` | If a user with the id `mary` is ever created in Keycloak or LDAP, they are a full admin immediately | Remove the line together with E1, then delete the `mary` entries under *Admin → Authorizations* (they stay in the DB) |
-| E4 | **Single admin user `cibadmin`**, created by the realm import (Keycloak) or `ldap-seed` (LDAP), password from `.env` | `realm-cibseven.json`, `ldap/seed.ldif.tmpl` | A known account with full admin rights | Replace with real users and groups from your directory |
+| E3 | Keycloak/LDAP: **all permissions for the user id `mary`** (`admin-auth.administrator-user-name: mary`), only so the invoice example can start (see [The invoice example](#the-invoice-example)). No such user exists | `cibseven/application.yaml`, `wildfly/cli/ldap.cli`, `keycloak.cli` | If a user with the id `mary` is ever created in Keycloak or LDAP, they are a full admin immediately | Remove the line together with E1, then delete the `mary` entries under *Admin → Authorizations* (they stay in the DB) |
+| E4 | **Admin user `cibadmin`**, created by the realm import (Keycloak), `ldap-seed` (LDAP) or `camunda.bpm.admin-user` / the `admin-user` job (internal), password from `.env` | `realm-cibseven.json`, `ldap/seed.ldif.tmpl`, `internal/cibseven/application.yaml` | A known account with full admin rights | Replace with real users and groups from your directory |
 | E5 | **Webclient JWT secret generated per container start** (image default, not configured) | image default | Sessions are lost on every container restart; doesn't work with several CIB seven nodes | Set a fixed `cibseven.webclient.authentication.jwtSecret` from a secret store |
 | E6 | **Swagger UI / OpenAPI of the webclient left on** (production default) | `/webapp/swagger-ui`, `/webapp/v3/api-docs` | Exposes the API description | `springdoc.api-docs.enabled=false`, `springdoc.swagger-ui.enabled=false` |
 | E7 | **No container hardening** (default capabilities, writable root filesystem, no resource limits) | `docker-compose.yml` | Larger impact if a container is compromised; no protection against resource exhaustion | `read_only`, `cap_drop: [ALL]`, `security_opt: no-new-privileges`, memory/CPU limits |
@@ -439,6 +630,9 @@ before reusing the setup elsewhere.
 | E10 | LDAP (Run): **HTTP Basic on the engine REST API** (`composite` auth from `production.yml`) | `production.yml` | Every REST call carries an LDAP password; without TLS (P1) in clear text | Prefer tokens for technical clients; TLS is mandatory (P1). The WildFly variant has no HTTP Basic |
 | E11 | WildFly: **REST API accepts webclient tokens only** (patched `engine-rest` `web.xml`) | `wildfly/Dockerfile` | External REST clients (scripts, workers) can't authenticate; anyone holding the webclient JWT secret could issue tokens | Add an authentication scheme for technical clients if needed; keep the JWT secret secret (E5) |
 | E12 | WildFly: **default filter written directly into the engine database** by the `default-filter` job | `wildfly/create-default-filter.sh` | Bypasses the engine API; relies on the `act_ru_filter` table layout of CIB seven 3.0 | Create filters through the webclient or REST API instead; check the job after engine upgrades |
+| E13 | Internal: **demo users of the invoice example stay in the database** (`demo`, `john`, `mary`, `peter`), **locked** by the `lock-demo-users` job: default passwords (= user name) replaced with random ones, `demo` removed from `camunda-admin` | engine database, `internal/scripts/lock-demo-users.sh` | Between the engine start and the end of the job (seconds) the default passwords work; an admin who sets a new password reactivates the account; the job relies on the identity table layout of CIB seven 3.0 | Disable the example (E1) and delete the users. Deleting only `demo` makes the example recreate all of them |
+| E14 | WildFly internal: **initial admin written directly into the engine database** by the `admin-user` job; the password policy is not checked | `wildfly/create-admin-user.sh` | A weak `CIBSEVEN_ADMIN_PASSWORD` is accepted; relies on the identity table layout of CIB seven 3.0 | Use a strong password; change it in the webclient after the first login |
+| E15 | **Engine password policy off** for quick testing (`CIBSEVEN_PASSWORD_POLICY=false`, default in all setups; `production.yml` would switch it on) | `.env`, `cibseven/application.yaml`, `wildfly/cli/common.cli` | Users managed by CIB seven (internal setup) can get weak passwords, incl. `CIBSEVEN_ADMIN_PASSWORD` | `CIBSEVEN_PASSWORD_POLICY=true` in `.env`, then `docker compose up -d cibseven` (see [Password policy](#password-policy)); set new passwords for users created while it was off |
 
 ### General production hardening
 
@@ -446,7 +640,7 @@ What any real production system needs on top, independent of the decisions above
 
 | # | Item | Where | Risk | Production fix |
 |---|---|---|---|---|
-| P1 | **No TLS for CIB seven.** Webclient and REST API are served over plain HTTP | `docker-compose.yml` (port 8080) | Tokens, session JWTs and (LDAP setup) Basic-auth passwords travel in clear text | Put a TLS-terminating reverse proxy in front, or set `server.ssl.*` |
+| P1 | **No TLS for CIB seven.** Webclient and REST API are served over plain HTTP | `docker-compose.yml` (port 8080) | Tokens, session JWTs and (LDAP and internal setups) Basic-auth passwords travel in clear text | Put a TLS-terminating reverse proxy in front, or set `server.ssl.*` |
 | P2 | **Ports published on all host interfaces** (`0.0.0.0`) | `ports:` in `docker-compose.yml` | Anyone who can reach the host can reach CIB seven, Keycloak (incl. admin console) and LDAP | Bind to `127.0.0.1:` or publish only through the reverse proxy |
 | P3 | **Database account is the PostgreSQL superuser.** `POSTGRES_USER` creates a superuser, and CIB seven/Keycloak use it | `cibseven-db`, `keycloak-db` | A compromised application owns the whole DB server | Separate owner and app accounts with minimal rights |
 | P4 | **No TLS to PostgreSQL** | `DB_URL`, `KC_DB_URL` | Clear-text DB traffic (only on the internal Docker network here) | `sslmode=require/verify-full` on a managed or TLS-enabled DB |
@@ -528,6 +722,20 @@ docker compose down
 
 `docker compose down -v` also deletes all volumes (databases, LDAP data, Keycloak realm).
 
+**Remove a variant completely** (containers and volumes), from the setup's folder:
+
+```bash
+docker compose down -v
+```
+
+```bash
+docker compose -f docker-compose.wildfly.yml down -v
+```
+
+The first removes the Run variant, the second the WildFly variant. They are separate projects, so
+each one only removes itself. The locally built WildFly image stays; remove it with
+`docker image rm cibseven-wildfly:<keycloak|ldap|internal>` if needed.
+
 To change the configuration, edit `cibseven/application.yaml` and run `docker compose restart cibseven`.
 The file is loaded via `SPRING_CONFIG_ADDITIONAL_LOCATION` on top of
 `/camunda/configuration/production.yml` and overrides its values.
@@ -558,6 +766,8 @@ docker compose start cibseven
 | Keycloak: "Invalid parameter: redirect_uri" | `CIBSEVEN_PUBLIC_URL` doesn't match the browser URL. Re-import the realm (`down -v`) or fix the redirect URI in the admin console |
 | Login OK, then 401 on `/engine-rest` | Issuer mismatch: `KEYCLOAK_PUBLIC_URL` must exactly match the browser URL, port included |
 | Webclient shows no menus / "no permissions" | The user is not in `camunda-admin` and has no authorizations |
+| Internal (Run): CIB seven fails at startup while creating the admin user | With `CIBSEVEN_PASSWORD_POLICY=true`, `CIBSEVEN_ADMIN_PASSWORD` violates the password policy (10+ characters, upper/lower case, digit, special character, not containing the user id). Fix it in `.env`, then `docker compose up -d` |
+| Bpm provider switch has no effect | `.env` changes need `docker compose up -d cibseven` (a restart keeps the old environment). Check that `CIBSEVEN_BPM_PROVIDER` holds the full class name |
 | CIB seven exits with `NullPointerException` in `@PostDeploy` | `administrator-user-name: mary` is missing under `admin-auth` (see [The invoice example](#the-invoice-example)). Then start again: `docker compose up -d` |
 | Keycloak setup: `cibseven` fails to start, mount error for `cibseven-keycloak-run-….jar` | Plugin jar not downloaded. Run `./plugin/fetch-plugin.sh` |
 | Keycloak setup: engine fails with errors from `org.cibseven.community.keycloak` | `cibseven-identity` lacks the roles `query-users`, `view-users`, `query-groups`, or its secret differs from `.env`; or the plugin version doesn't match CIB seven |
@@ -565,6 +775,7 @@ docker compose start cibseven
 | LDAP: `openldap` doesn't get healthy after switching from 1.5.0 | Old volumes from the v1 image. Run `docker compose down -v` |
 | LDAP login fails | Check `docker compose logs ldap-seed`. Changed an LDAP password in `.env` after the first start? The bootstrap only runs once, so run `down -v` |
 | Port already in use | Change `CIBSEVEN_PORT`, `KEYCLOAK_PORT`, `LDAP_PORT` in `.env` (for Keycloak, also the `*_PUBLIC_URL` values). Is the other variant (Run / WildFly) still running? |
+| `down -v` doesn't remove the WildFly variant (or removed the Run variant instead) | Without `-f`, compose uses `docker-compose.yml`, i.e. the Run project. Use `docker compose -f docker-compose.wildfly.yml down -v` (or `export COMPOSE_FILE=docker-compose.wildfly.yml`). Messages like `no container with name … found` mean the addressed project doesn't exist |
 | Podman: `up` fails with `container name "…" is already in use` | podman-compose tries to recreate containers of a project that already exists. Run `docker compose down` first (keeps the volumes; add `-f docker-compose.wildfly.yml` for the WildFly variant), then `up -d` again. If only dependency containers are listed while the service you named was started, it is harmless |
 | WildFly: image build fails pulling the base image | Run `docker login enterprise.artifacts.cibseven.org` |
 | WildFly: build fails at "Patching engine-rest web.xml failed" | The base image's `web.xml` changed (other CIB seven version). Adjust the `sed` expressions in `wildfly/Dockerfile` |

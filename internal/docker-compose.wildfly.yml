@@ -1,0 +1,117 @@
+# =============================================================================
+# CIB seven 3.0.0 EE on WildFly – production configuration with internal user management
+#
+# WildFly variant of docker-compose.yml: same database and .env, but CIB seven runs on
+# WildFly (image built from ../wildfly/Dockerfile, IDENTITY_PROVIDER=internal).
+#
+#   cibseven        CIB seven WildFly EE, users/groups in its own database,
+#                   REST API: webclient tokens only
+#   admin-user      one-off job: creates the initial admin user (after cibseven is healthy)
+#   default-filter  one-off job: creates the task filter "All tasks"
+#   lock-demo-users one-off job: protects the invoice example's demo users
+#   cibseven-db     taken over from docker-compose.yml (extends)
+#
+# Own project name -> own containers and volumes, independent of the Run variant.
+# Start:  docker compose -f docker-compose.wildfly.yml up -d --build
+# Docs:   ../README.md, "Setup C – Internal user management" and "WildFly variant"
+# =============================================================================
+name: cibseven-internal-wildfly
+
+services:
+
+  cibseven-db:
+    extends:
+      file: docker-compose.yml
+      service: cibseven-db
+
+  cibseven:
+    build:
+      context: ../wildfly
+      args:
+        IDENTITY_PROVIDER: internal
+        CIBSEVEN_WILDFLY_IMAGE: ${CIBSEVEN_WILDFLY_IMAGE:-enterprise.artifacts.cibseven.org/cibseven:wildfly-3.0.0-ee}
+    image: cibseven-wildfly:internal
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+      DB_DRIVER: org.postgresql.Driver
+      DB_URL: jdbc:postgresql://cibseven-db:5432/cibseven
+      DB_USERNAME: ${CIBSEVEN_DB_USER:-cibseven}
+      DB_PASSWORD: ${CIBSEVEN_DB_PASSWORD:?CIBSEVEN_DB_PASSWORD missing in .env}
+      # AI agent connector (on, like the Run variant). LLM key only from .env.
+      AI_AGENT_ENABLED: "true"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY missing in .env}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      CIBSEVEN_CONNECT_AI_AGENT_DEFAULT_MODEL: ${AI_DEFAULT_MODEL:-gpt-6-luna}
+      # How the webclient talks to the engine (README, "Webclient bpm provider")
+      CIBSEVEN_WEBCLIENT_BPM_PROVIDER: ${CIBSEVEN_BPM_PROVIDER:-org.cibseven.webapp.providers.SevenProviderEE}
+      # Engine password policy, off by default for quick testing (README, decision E15)
+      CIBSEVEN_PASSWORD_POLICY: ${CIBSEVEN_PASSWORD_POLICY:-false}
+    ports:
+      - "${CIBSEVEN_PORT:-8080}:8080"
+    volumes:
+      # Webclient configuration on the classpath of the global module org.cibseven.config
+      - ./cibseven/cibseven-webclient-wildfly.yaml:/camunda/modules/org/cibseven/config/main/cibseven-webclient.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/webapp/"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    depends_on:
+      cibseven-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  admin-user:
+    image: docker.io/library/postgres:17-alpine
+    entrypoint: ["/bin/sh", "/scripts/create-admin-user.sh"]
+    environment:
+      PGHOST: cibseven-db
+      PGDATABASE: cibseven
+      PGUSER: ${CIBSEVEN_DB_USER:-cibseven}
+      PGPASSWORD: ${CIBSEVEN_DB_PASSWORD:?CIBSEVEN_DB_PASSWORD missing in .env}
+      ADMIN_ID: ${CIBSEVEN_ADMIN_USER:-cibadmin}
+      ADMIN_PASSWORD: ${CIBSEVEN_ADMIN_PASSWORD:?CIBSEVEN_ADMIN_PASSWORD missing in .env}
+    volumes:
+      - ../wildfly/create-admin-user.sh:/scripts/create-admin-user.sh:ro
+    depends_on:
+      # after the engine (and the invoice example's demo data) are completely set up
+      cibseven:
+        condition: service_healthy
+    restart: "no"
+
+  default-filter:
+    image: docker.io/library/postgres:17-alpine
+    entrypoint: ["/bin/sh", "/scripts/create-default-filter.sh"]
+    environment:
+      PGHOST: cibseven-db
+      PGDATABASE: cibseven
+      PGUSER: ${CIBSEVEN_DB_USER:-cibseven}
+      PGPASSWORD: ${CIBSEVEN_DB_PASSWORD:?CIBSEVEN_DB_PASSWORD missing in .env}
+      FILTER_NAME: All tasks
+    volumes:
+      - ../wildfly/create-default-filter.sh:/scripts/create-default-filter.sh:ro
+    depends_on:
+      cibseven-db:
+        condition: service_healthy
+    restart: "no"
+
+  lock-demo-users:
+    # Protects the invoice example's demo users (README, Setup C): default passwords replaced
+    # with random ones, demo removed from camunda-admin. Runs once cibseven is healthy.
+    image: docker.io/library/postgres:17-alpine
+    entrypoint: ["/bin/sh", "/scripts/lock-demo-users.sh"]
+    environment:
+      PGHOST: cibseven-db
+      PGDATABASE: cibseven
+      PGUSER: ${CIBSEVEN_DB_USER:-cibseven}
+      PGPASSWORD: ${CIBSEVEN_DB_PASSWORD:?CIBSEVEN_DB_PASSWORD missing in .env}
+    volumes:
+      - ./scripts/lock-demo-users.sh:/scripts/lock-demo-users.sh:ro
+    depends_on:
+      cibseven:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  cibseven-db-data:

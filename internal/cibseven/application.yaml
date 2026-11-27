@@ -1,0 +1,58 @@
+# =============================================================================
+# CIB seven Run 3.0.0 – overrides for internal user management
+#
+# Loaded via SPRING_CONFIG_ADDITIONAL_LOCATION on top of
+# /camunda/configuration/production.yml and takes precedence over it.
+# No secrets in this file – every ${...} comes from the environment
+# (docker-compose.yml -> .env).
+#
+# Users and groups live in CIB seven's own database (default identity service, writable):
+# create and manage them in the webclient under Admin. Login form in the webclient
+# (SevenUserProvider); /engine-rest keeps production.yml's "composite" auth
+# (webclient JWT or HTTP Basic with a CIB seven user).
+# =============================================================================
+
+camunda:
+  bpm:
+    # Password policy for users managed by the engine (production.yml: on). OFF by default for
+    # quick testing; set CIBSEVEN_PASSWORD_POLICY=true in .env to switch it on (README, E15).
+    generic-properties:
+      properties:
+        enable-password-policy: ${CIBSEVEN_PASSWORD_POLICY:false}
+    # Initial admin user, created on the first start if it doesn't exist yet, together with
+    # the group camunda-admin and all permissions for it. With CIBSEVEN_PASSWORD_POLICY=true the
+    # password must satisfy the password policy (at least 10 characters, upper and lower case, a
+    # digit and a special character, not containing the user id) – otherwise the start fails.
+    admin-user:
+      id: ${CIBSEVEN_ADMIN_USER}
+      password: ${CIBSEVEN_ADMIN_PASSWORD}
+      first-name: CIB
+      last-name: Admin
+    run:
+      # Invoice example (needs --example). With the writable identity service it also creates
+      # its demo users demo/demo (admin), john/john, mary/mary, peter/peter, their groups,
+      # permissions and filters – see README, explicit decisions.
+      example:
+        enabled: true
+    # Default task filter: created on engine start if no filter with this name exists yet.
+    # Empty query = every task the user is allowed to read.
+    filter:
+      create: All tasks
+    authorization:
+      enabled: true
+
+cibseven:
+  webclient:
+    # Modeler (BPMN/DMN/forms in the webclient). Off by default and not set by production.yml.
+    # Its tables are created by the engine (webclientExtensionsEnabled: true in production.yml).
+    modeler:
+      enabled: true
+      templates:
+        paths:
+          # Bundled connector templates (e.g. AI agent) inside the jars on the classpath
+          - "classpath*:element-templates/*.json"
+          # Own element templates: configuration/element-templates/ in the container
+          - "file:configuration/element-templates/*.json"
+    user:
+      # Login form, password checked by the engine against its own user table.
+      provider: org.cibseven.webapp.auth.SevenUserProvider

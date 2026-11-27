@@ -14,6 +14,11 @@
 
 camunda:
   bpm:
+    # Password policy for users managed by the engine (production.yml: on). OFF by default for
+    # quick testing; set CIBSEVEN_PASSWORD_POLICY=true in .env to switch it on (README, E15).
+    generic-properties:
+      properties:
+        enable-password-policy: ${CIBSEVEN_PASSWORD_POLICY:false}
     run:
       # Invoice example (needs --example). Deploys the invoice process and starts instances.
       # LDAP is read-only, so the example creates no demo users, groups or authorizations.

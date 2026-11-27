@@ -18,16 +18,16 @@
   ],
   "users": [
     {
-      "username": "cibadmin",
+      "username": "${CIBSEVEN_ADMIN_USER}",
       "enabled": true,
       "emailVerified": true,
       "firstName": "CIB",
       "lastName": "Admin",
-      "email": "cibadmin@example.org",
+      "email": "${CIBSEVEN_ADMIN_USER}@example.org",
       "credentials": [
         {
           "type": "password",
-          "value": "${KC_USER_CIBADMIN_PASSWORD}",
+          "value": "${CIBSEVEN_ADMIN_PASSWORD}",
           "temporary": false
         }
       ],

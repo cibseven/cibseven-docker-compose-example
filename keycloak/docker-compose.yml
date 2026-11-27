@@ -1,5 +1,5 @@
 # =============================================================================
-# CIB seven Run 3.0.0 – production configuration with Keycloak (OAuth2 / OIDC)
+# CIB seven Run 3.0.0 EE – production configuration with Keycloak (OAuth2 / OIDC)
 #
 #   cibseven     CIB seven Run enterprise edition (--production --oauth2 --example, AI agent on),
 #                webclient SSO via Keycloak, users/groups via the cibseven-keycloak plugin (read-only)
@@ -8,7 +8,7 @@
 #   keycloak-db  PostgreSQL for Keycloak
 #
 # All secrets come from .env (template: env.example). Nothing starts without it.
-# Docs: ../README.md
+# Docs: ../README.md, "Setup A – Keycloak"
 # =============================================================================
 name: cibseven-keycloak
 
@@ -68,7 +68,8 @@ services:
       CIBSEVEN_PUBLIC_URL: ${CIBSEVEN_PUBLIC_URL:-http://localhost:8080}
       CIBSEVEN_OIDC_CLIENT_SECRET: ${CIBSEVEN_OIDC_CLIENT_SECRET:?CIBSEVEN_OIDC_CLIENT_SECRET missing in .env}
       CIBSEVEN_IDENTITY_CLIENT_SECRET: ${CIBSEVEN_IDENTITY_CLIENT_SECRET:?CIBSEVEN_IDENTITY_CLIENT_SECRET missing in .env}
-      KC_USER_CIBADMIN_PASSWORD: ${KC_USER_CIBADMIN_PASSWORD:?KC_USER_CIBADMIN_PASSWORD missing in .env}
+      CIBSEVEN_ADMIN_USER: ${CIBSEVEN_ADMIN_USER:-cibadmin}
+      CIBSEVEN_ADMIN_PASSWORD: ${CIBSEVEN_ADMIN_PASSWORD:?CIBSEVEN_ADMIN_PASSWORD missing in .env}
     ports:
       - "${KEYCLOAK_PORT:-8180}:8080"
     volumes:
@@ -109,6 +110,10 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY missing in .env}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       CIBSEVEN_CONNECT_AI_AGENT_DEFAULT_MODEL: ${AI_DEFAULT_MODEL:-gpt-6-luna}
+      # How the webclient talks to the engine (README, "Webclient bpm provider")
+      CIBSEVEN_WEBCLIENT_BPM_PROVIDER: ${CIBSEVEN_BPM_PROVIDER:-org.cibseven.webapp.providers.SevenProviderEE}
+      # Engine password policy, off by default for quick testing (README, decision E15)
+      CIBSEVEN_PASSWORD_POLICY: ${CIBSEVEN_PASSWORD_POLICY:-false}
       # Loads ./cibseven/application.yaml on top of production.yml (higher priority)
       SPRING_CONFIG_ADDITIONAL_LOCATION: file:/opt/cibseven/config/
       # Values for the placeholders in ./cibseven/application.yaml

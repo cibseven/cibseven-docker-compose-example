@@ -1,0 +1,12 @@
+# =============================================================================
+# CIB seven webclient on WildFly – internal user management (used by docker-compose.wildfly.yml)
+#
+# Mounted as classpath:cibseven-webclient.yaml (global WildFly module org.cibseven.config).
+# Login form; the password is checked by the engine against its own user table via
+# /identity/verify, afterwards the webclient talks to the engine REST API with its own
+# token – the only authentication the REST API accepts in the WildFly variant.
+# =============================================================================
+cibseven:
+  webclient:
+    user:
+      provider: org.cibseven.webapp.auth.SevenUserProvider

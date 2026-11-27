@@ -6,5 +6,9 @@ batch
 
 /subsystem=camunda-bpm-platform/process-engines=default:list-add(name=plugins,index=0,value={"class"=>"org.cibseven.bpm.identity.impl.ldap.plugin.LdapIdentityProviderPlugin","properties"=>{"serverUrl"=>"${env.LDAP_URL}","acceptUntrustedCertificates"=>"false","managerDn"=>"${env.LDAP_MANAGER_DN}","managerPassword"=>"${env.LDAP_MANAGER_PASSWORD}","baseDn"=>"${env.LDAP_BASE_DN}","userSearchBase"=>"ou=people","userSearchFilter"=>"(objectclass=inetOrgPerson)","userIdAttribute"=>"uid","userFirstnameAttribute"=>"givenName","userLastnameAttribute"=>"sn","userEmailAttribute"=>"mail","userPasswordAttribute"=>"userPassword","groupSearchBase"=>"ou=groups","groupSearchFilter"=>"(objectclass=groupOfNames)","groupIdAttribute"=>"cn","groupNameAttribute"=>"cn","groupMemberAttribute"=>"member","sortControlSupported"=>"false","authorizationCheckEnabled"=>"true"}})
 
+# All permissions for the user id "mary" (no such user exists): needed by the invoice example
+# only, because the read-only identity provider skips its demo data (README, decision E3).
+/subsystem=camunda-bpm-platform/process-engines=default:list-add(name=plugins,value={"class"=>"org.cibseven.bpm.engine.impl.plugin.AdministratorAuthorizationPlugin","properties"=>{"administratorUserName"=>"mary"}})
+
 run-batch
 stop-embedded-server

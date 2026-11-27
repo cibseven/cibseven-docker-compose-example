@@ -1,0 +1,96 @@
+# =============================================================================
+# CIB seven Run 3.0.0 EE – production configuration with internal user management
+#
+#   cibseven     CIB seven Run enterprise edition (--production --example, AI agent on),
+#                users/groups in CIB seven's own database (writable, managed in the webclient)
+#   cibseven-db  PostgreSQL for the process engine
+#   lock-demo-users  one-off job: protects the invoice example's demo users
+#
+# All secrets come from .env (template: env.example). Nothing starts without it.
+# Docs: ../README.md, "Setup C – Internal user management"
+# =============================================================================
+name: cibseven-internal
+
+services:
+
+  cibseven-db:
+    image: docker.io/library/postgres:17-alpine
+    environment:
+      POSTGRES_DB: cibseven
+      POSTGRES_USER: ${CIBSEVEN_DB_USER:-cibseven}
+      POSTGRES_PASSWORD: ${CIBSEVEN_DB_PASSWORD:?CIBSEVEN_DB_PASSWORD missing in .env}
+    volumes:
+      - cibseven-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  cibseven:
+    # CIB seven enterprise image (needs: docker login enterprise.artifacts.cibseven.org)
+    image: ${CIBSEVEN_IMAGE:-enterprise.artifacts.cibseven.org/cibseven:run-3.0.0-ee}
+    # --production: configuration/production.yml instead of default.yml (no demo/demo admin
+    #               from the config, authorization on, composite auth for /engine-rest, WADL off)
+    # --example:    invoice example on the classpath (also needs camunda.bpm.run.example.enabled)
+    # As soon as one module flag is given, --webapps and --rest must be listed explicitly.
+    command: ["./cibseven.sh", "--webapps", "--rest", "--example", "--production"]
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+      DB_DRIVER: org.postgresql.Driver
+      DB_URL: jdbc:postgresql://cibseven-db:5432/cibseven
+      DB_USERNAME: ${CIBSEVEN_DB_USER:-cibseven}
+      DB_PASSWORD: ${CIBSEVEN_DB_PASSWORD:?CIBSEVEN_DB_PASSWORD missing in .env}
+      # AI agent connector + agentic ad hoc sub processes (off by default under --production,
+      # this switches it on). MCP REST API (/mcp) stays off.
+      AI_AGENT_ENABLED: "true"
+      MCP_ENABLED: "false"
+      # LLM access for the AI agent connector – the key lives only in .env.
+      # Any OpenAI-compatible endpoint works (OpenAI, Azure OpenAI, OpenRouter, Ollama, ...).
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY missing in .env}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      CIBSEVEN_CONNECT_AI_AGENT_DEFAULT_MODEL: ${AI_DEFAULT_MODEL:-gpt-6-luna}
+      # How the webclient talks to the engine (README, "Webclient bpm provider")
+      CIBSEVEN_WEBCLIENT_BPM_PROVIDER: ${CIBSEVEN_BPM_PROVIDER:-org.cibseven.webapp.providers.SevenProviderEE}
+      # Engine password policy, off by default for quick testing (README, decision E15)
+      CIBSEVEN_PASSWORD_POLICY: ${CIBSEVEN_PASSWORD_POLICY:-false}
+      # Loads ./cibseven/application.yaml on top of production.yml (higher priority)
+      SPRING_CONFIG_ADDITIONAL_LOCATION: file:/opt/cibseven/config/
+      # Initial admin user (placeholders in ./cibseven/application.yaml)
+      CIBSEVEN_ADMIN_USER: ${CIBSEVEN_ADMIN_USER:-cibadmin}
+      CIBSEVEN_ADMIN_PASSWORD: ${CIBSEVEN_ADMIN_PASSWORD:?CIBSEVEN_ADMIN_PASSWORD missing in .env}
+    ports:
+      - "${CIBSEVEN_PORT:-8080}:8080"
+    volumes:
+      - ./cibseven/application.yaml:/opt/cibseven/config/application.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      cibseven-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  lock-demo-users:
+    # Protects the invoice example's demo users (README, Setup C): default passwords replaced
+    # with random ones, demo removed from camunda-admin. Runs once cibseven is healthy.
+    image: docker.io/library/postgres:17-alpine
+    entrypoint: ["/bin/sh", "/scripts/lock-demo-users.sh"]
+    environment:
+      PGHOST: cibseven-db
+      PGDATABASE: cibseven
+      PGUSER: ${CIBSEVEN_DB_USER:-cibseven}
+      PGPASSWORD: ${CIBSEVEN_DB_PASSWORD:?CIBSEVEN_DB_PASSWORD missing in .env}
+    volumes:
+      - ./scripts/lock-demo-users.sh:/scripts/lock-demo-users.sh:ro
+    depends_on:
+      cibseven:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  cibseven-db-data:

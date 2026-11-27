@@ -9,17 +9,17 @@ dn: ou=groups,@BASE_DN@
 objectClass: organizationalUnit
 ou: groups
 
-dn: uid=cibadmin,ou=people,@BASE_DN@
+dn: uid=@ADMIN_ID@,ou=people,@BASE_DN@
 objectClass: inetOrgPerson
-uid: cibadmin
+uid: @ADMIN_ID@
 cn: CIB Admin
 givenName: CIB
 sn: Admin
-mail: cibadmin@example.org
-userPassword: @CIBADMIN_PASSWORD_HASH@
+mail: @ADMIN_ID@@example.org
+userPassword: @ADMIN_PASSWORD_HASH@
 
 dn: cn=camunda-admin,ou=groups,@BASE_DN@
 objectClass: groupOfNames
 cn: camunda-admin
 description: CIB seven administrators (full permissions via admin-auth)
-member: uid=cibadmin,ou=people,@BASE_DN@
+member: uid=@ADMIN_ID@,ou=people,@BASE_DN@

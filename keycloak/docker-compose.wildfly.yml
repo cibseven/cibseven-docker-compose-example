@@ -11,7 +11,7 @@
 #
 # Own project name -> own containers and volumes, independent of the Run variant.
 # Start:  docker compose -f docker-compose.wildfly.yml up -d --build
-# Docs:   ../README.md, "WildFly variant"
+# Docs:   ../README.md, "Setup A – Keycloak" and "WildFly variant"
 # =============================================================================
 name: cibseven-keycloak-wildfly
 
@@ -54,6 +54,10 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY missing in .env}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       CIBSEVEN_CONNECT_AI_AGENT_DEFAULT_MODEL: ${AI_DEFAULT_MODEL:-gpt-6-luna}
+      # How the webclient talks to the engine (README, "Webclient bpm provider")
+      CIBSEVEN_WEBCLIENT_BPM_PROVIDER: ${CIBSEVEN_BPM_PROVIDER:-org.cibseven.webapp.providers.SevenProviderEE}
+      # Engine password policy, off by default for quick testing (README, decision E15)
+      CIBSEVEN_PASSWORD_POLICY: ${CIBSEVEN_PASSWORD_POLICY:-false}
       # cibseven-keycloak plugin: ${env.*} expressions in standalone.xml
       KEYCLOAK_ISSUER_URL: http://keycloak:8080/realms/cibseven
       KEYCLOAK_ADMIN_URL: http://keycloak:8080/admin/realms/cibseven
